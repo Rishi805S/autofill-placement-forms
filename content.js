@@ -488,6 +488,21 @@ function computeCandidatesForProfile(profile){
         });
       }
     }
+    // If no chosen option yet, try matching option labels against high-priority profile fields (branch, college, qualification...)
+    if(!chosen){
+      const pCandidates = getProfileMatchCandidates(profile);
+      let best = null; let bestScore = 0;
+      options.forEach(opt=>{
+        const ol = String(opt.label||'').toLowerCase();
+        const ov = String(opt.value||'').toLowerCase();
+        pCandidates.forEach(pc=>{
+          const score = Math.max(tokenOverlapScore(pc.val, ol), tokenOverlapScore(pc.val, ov));
+          if(score > bestScore){ bestScore = score; best = opt; }
+        });
+      });
+      // require at least one token overlap to avoid accidental matches
+      if(bestScore > 0) chosen = best;
+    }
     if(chosen){
       // graduation year: prefer numeric match if applicable
       const rl = (rootLabel||'').toLowerCase();
@@ -524,13 +539,18 @@ function computeCandidatesForProfile(profile){
       if(res && res.key) matchedField = res.key;
     }
     if(!matchedField){ const val = simpleMatch(label, profile); if(val) matchedField = 'fallback'; }
-    // choose option best matching profile values (gender, relocate, graduationYear, or matchedField)
-    let chosen = null;
-    let bestScore = 0;
+  // choose option best matching profile values (gender, relocate, graduationYear, or matchedField)
+  let chosen = null;
+  let bestScore = 0;
     try{
       // collect candidate profile values to consider (in order)
       const candidatesToCheck = [];
       if(matchedField && profile[matchedField]) candidatesToCheck.push({key: matchedField, val: String(profile[matchedField])});
+      // include profile-priority candidates so option labels like CSE match even if the question label is 'Course'
+      const pCandidates = getProfileMatchCandidates(profile);
+      pCandidates.forEach(pc=>{ // only add if not duplicate key
+        if(!candidatesToCheck.some(x=>x.key===pc.key)) candidatesToCheck.push({key: pc.key, val: pc.val});
+      });
       // if option labels contain explicit gender tokens, allow gender to be considered even if question label is generic
       try{
         const genderTokenPresent = options.some(o=>{ const t = String((o.label||'')).toLowerCase(); return /\b(male|female|man|woman|m\b|f\b)\b/.test(t); });
@@ -548,13 +568,15 @@ function computeCandidatesForProfile(profile){
       }catch(e){}
       if(profile.graduationYear) candidatesToCheck.push({key: 'graduationYear', val: String(profile.graduationYear)});
 
-      const qLower = (label || '').toLowerCase();
+  const qLower = (label || '').toLowerCase();
+  // helper: normalized option label
+  function normOpt(o){ return String((o.label||'')).toLowerCase().trim(); }
       // helper to normalize option labels and deprioritize generic "Other" options
       function normalizeOptLabel(s){ if(!s) return ''; return String(s).replace(/\s+/g,' ').trim().toLowerCase(); }
       const isQuestionGraduation = /graduat|pass|yop|year|batch|passing out/.test(qLower);
 
       // evaluate each option against candidate values
-      options.forEach(opt=>{
+  options.forEach(opt=>{
         const rawLabel = (opt.label||'');
         const norm = normalizeOptLabel(rawLabel);
         const optValue = String(opt.value||'').toLowerCase();
@@ -602,7 +624,7 @@ function computeCandidatesForProfile(profile){
           if(overlap>0) { localBest = Math.max(localBest, overlap * 12); if(!localKey) localKey = c.key; }
         }
 
-        // penalize matching for 'other' options to avoid accidental selection
+  // penalize matching for 'other' options to avoid accidental selection
         if(isOther) localBest = Math.max(0, localBest - 80);
 
         // small heuristic: if option label contains numeric year and question seems like graduation, boost it
@@ -610,6 +632,22 @@ function computeCandidatesForProfile(profile){
 
         if(localBest > bestScore){ bestScore = localBest; chosen = opt; }
       });
+
+  // If no strong match found yet, as a fallback try matching option labels against prioritized profile fields (branch/college/...)
+  if(!chosen || bestScore < 80){
+    const pCandidates2 = getProfileMatchCandidates(profile);
+    if(pCandidates2 && pCandidates2.length>0){
+      let fallbackBest = 0; let fallbackChosen = null;
+      options.forEach(opt=>{
+        const ol = String(opt.label||'').toLowerCase(); const ov = String(opt.value||'').toLowerCase();
+        pCandidates2.forEach(pc=>{
+          const sc = Math.max(tokenOverlapScore(pc.val, ol), tokenOverlapScore(pc.val, ov));
+          if(sc > fallbackBest){ fallbackBest = sc; fallbackChosen = opt; }
+        });
+      });
+      if(fallbackBest > 0){ chosen = fallbackChosen; bestScore = Math.max(bestScore, fallbackBest*12); }
+    }
+  }
 
   // require a minimum confidence to avoid accidental yes/no matches
   const RADIO_MIN_SCORE = 80;
@@ -650,6 +688,13 @@ function computeCandidatesForProfile(profile){
     const chosen = [];
     if(matchedField && profile[matchedField]){
       const pv = String(profile[matchedField]).toLowerCase(); options.forEach(opt=>{ if(tokenOverlapScore(pv, (opt.label||'').toLowerCase())>0) chosen.push(opt); });
+    }
+    // fallback: try matching against prioritized profile fields (branch, college, qualification)
+    if(chosen.length === 0){
+      const pCandidates3 = getProfileMatchCandidates(profile);
+      if(pCandidates3 && pCandidates3.length>0){
+        pCandidates3.forEach(pc=>{ options.forEach(opt=>{ if(tokenOverlapScore(pc.val, (opt.label||'').toLowerCase())>0) chosen.push(opt); }); });
+      }
     }
     if(chosen.length>0){ matchedLabels.push(label); candidates.push({type:'checkbox', root, label, key: matchedField, chosenLabels: chosen.map(c=>c.label), options, score: 50}); }
   });
@@ -927,6 +972,26 @@ function tokenOverlapScore(a, b){
   if(at.length===0 || bt.length===0) return 0;
   const overlap = at.filter(t=>bt.includes(t)).length;
   return overlap;
+}
+
+// Build a prioritized list of profile fields to try matching against option labels
+function getProfileMatchCandidates(profile){
+  if(!profile || typeof profile !== 'object') return [];
+  const keys = [];
+  // Priority order: branch, college/institute, highest qualification (if present), graduationYear, gender, relocate
+  if(profile.branch) keys.push({key:'branch', val: String(profile.branch)});
+  if(profile.college) keys.push({key:'college', val: String(profile.college)});
+  // support alternate field names if present
+  if(profile.highestQualification) keys.push({key:'highestQualification', val: String(profile.highestQualification)});
+  if(profile.qualification) keys.push({key:'qualification', val: String(profile.qualification)});
+  if(profile.graduationYear) keys.push({key:'graduationYear', val: String(profile.graduationYear)});
+  if(profile.gender) keys.push({key:'gender', val: String(profile.gender)});
+  if(profile.relocate) keys.push({key:'relocate', val: String(profile.relocate)});
+  // include fullname/email/phone as low-priority (avoid accidental matches)
+  if(profile.fullName) keys.push({key:'fullName', val: String(profile.fullName)});
+  if(profile.email) keys.push({key:'email', val: String(profile.email)});
+  // normalize values
+  return keys.map(k=>({ key: k.key, val: (k.val||'').toLowerCase().trim() })).filter(k=>k.val && k.val.length>0);
 }
 
 // simple helper to safely escape strings for RegExp construction
