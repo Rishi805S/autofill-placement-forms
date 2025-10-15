@@ -68,6 +68,12 @@ function buildProfileFromForm() {
     branch: $('branch').value || '',
     gender: $('gender').value || '',
     relocate: $('relocate').value || '',
+    city: $('city').value || '',
+    highestQualification: $('highestQualification').value || '',
+    hasBacklogs: $('hasBacklogs').value || '',
+    backlogCount: $('backlogCount').value || '',
+    dob: $('dob').value || '',
+    nationality: $('nationality').value || '',
     lastUpdated: Date.now()
   };
 }
@@ -88,11 +94,20 @@ function loadProfileIntoForm(profile, name) {
   $('branch').value = profile.branch || '';
   $('gender').value = profile.gender || '';
   $('relocate').value = profile.relocate || '';
+  // new fields
+  try{ $('city').value = profile.city || ''; }catch(e){}
+  try{ $('highestQualification').value = profile.highestQualification || ''; }catch(e){}
+  try{ $('hasBacklogs').value = profile.hasBacklogs || ''; }catch(e){}
+  try{ $('backlogCount').value = profile.backlogCount || ''; }catch(e){}
+  try{ $('dob').value = profile.dob || ''; }catch(e){}
+  try{ $('nationality').value = profile.nationality || ''; }catch(e){}
 }
 
 function clearForm() {
   $('profileForm').reset();
 }
+
+// custom fields feature removed per user request
 
 function createProfileCard(name, profile) {
   const card = document.createElement('div');
@@ -298,6 +313,9 @@ document.addEventListener('DOMContentLoaded', () => {
       setStatus('No profile data copied', true);
     }
   });
+
+  // Cancel edit button in form (if present)
+  const cancelEdit = $('cancelEdit'); if(cancelEdit) cancelEdit.addEventListener('click', ()=>{ showMainView(); });
 
   // Profile form submission
   $('profileForm').addEventListener('submit', (e) => {
