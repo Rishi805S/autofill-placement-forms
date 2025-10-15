@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Placement Form Autofill",
+  "version": "0.1.0",
+  "description": "Autofill placement forms (Google Forms) from a saved profile.",
+  "icons": {
+    "48": "icons/icon48_prod.png",
+    "128": "icons/icon128_prod.png"
+  },
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": [
+    "*://docs.google.com/forms/*",
+    "*://forms.gle/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "https://localhost/*",
+    "https://127.0.0.1/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+  "default_icon": "icons/icon48_prod.png"
+
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://docs.google.com/forms/*",
+        "*://forms.gle/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*",
+        "https://localhost/*",
+        "https://127.0.0.1/*"
+      ],
+      "js": ["matcher.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

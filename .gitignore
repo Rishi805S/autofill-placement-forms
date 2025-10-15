@@ -1,0 +1,39 @@
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+package-lock.json
+yarn.lock
+
+# VSCode
+.vscode/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# Build
+dist/
+build/
+
+# Logs
+*.log
+
+# Chrome extension
+*.crx
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Ignore local secrets
+.env
+
+# Ignore OS files
+desktop.ini
+
+# Ignore other
+*.bak
+*.swp

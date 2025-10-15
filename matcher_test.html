@@ -1,0 +1,73 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Matcher Tests</title>
+    <style>
+      body{font-family:Arial,Helvetica,sans-serif;padding:18px}
+      .pass{color:green}
+      .fail{color:red}
+      pre{background:#f6f6f6;padding:8px}
+    </style>
+  </head>
+  <body>
+    <h2>Matcher tests (browser)</h2>
+    <p>Opens <code>matcher.js</code> and runs simple tests against <code>window.AutofillMatcher.matchQuestionToField</code>.</p>
+    <div id="results">Running...</div>
+    <script src="matcher.js"></script>
+    <script>
+      function run(){
+        const results = document.getElementById('results');
+        const profile = {
+          fullName: 'Rishi Kumar',
+          email: 'rishi@example.com',
+          phone: '+919123456789',
+          cgpa: '8.6',
+          rollNo: '18XX001',
+          resumeLink: 'https://drive.google.com/resume',
+          college: 'My College',
+          gender: 'Male',
+          relocate: 'Yes'
+        };
+        const tests = [
+          {q: 'Please enter your full name', expect: 'fullName'},
+          {q: 'Candidate name (first & last)', expect: 'fullName'},
+          {q: 'What is your email address?', expect: 'email'},
+          {q: 'Enter your e-mail', expect: 'email'},
+          {q: 'Phone / Mobile number', expect: 'phone'},
+          {q: 'Contact number', expect: 'phone'},
+          {q: 'WhatsApp number', expect: 'phone'},
+          {q: 'Enter your GPA or CGPA', expect: 'cgpa'},
+          {q: 'Aggregate / Percentage', expect: 'cgpa'},
+          {q: '10th Percentage (SSC)', expect: 'tenthPercent'},
+          {q: '12th / HSC percentage', expect: 'twelfthPercent'},
+          {q: 'College roll number', expect: 'rollNo'},
+          {q: 'Upload your resume (link)', expect: 'resumeLink'},
+          {q: 'Share your Google Drive link of CV', expect: 'resumeLink'},
+          {q: 'Provide link to your LinkedIn or GitHub', expect: 'resumeLink'},
+          {q: 'Which college are you from?', expect: 'college'},
+          {q: 'Gender', expect: 'gender'},
+          {q: 'Are you willing to relocate?', expect: 'relocate'},
+          {q: 'Unrelated question about hobbies', expect: null}
+        ];
+        const out = [];
+        let passCount = 0;
+        tests.forEach((t,i)=>{
+          const res = window.AutofillMatcher && window.AutofillMatcher.matchQuestionToField ? window.AutofillMatcher.matchQuestionToField(t.q, profile) : null;
+          const got = res && res.key ? res.key : null;
+          const score = res && res.score ? res.score : 0;
+          const pass = (t.expect === null && got === null) || (t.expect !== null && got === t.expect && score >= 40);
+          if(pass) passCount++;
+          out.push({i, q: t.q, expect: t.expect, got, score, pass});
+        });
+        let html = `<div>Passed ${passCount} / ${tests.length}</div><ol>`;
+        out.forEach(r=>{
+          html += `<li class="${r.pass? 'pass':'fail'}"><strong>${r.q}</strong><div>expect: ${r.expect} got: ${r.got} (score: ${r.score})</div></li>`;
+        });
+        html += '</ol><p>Note: open developer console to inspect full matcher output.</p>';
+        results.innerHTML = html;
+      }
+      document.addEventListener('DOMContentLoaded', run);
+    </script>
+  </body>
+</html>

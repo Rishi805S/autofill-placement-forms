@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "fullName": "Rishi Kumar",
+  "email": "rishi.kumar@example.com",
+  "phone": "+91-9123456789",
+  "rollNo": "18XX001",
+  "cgpa": "8.6",
+  "tenthPercent": "94",
+  "twelfthPercent": "92",
+  "resumeLink": "https://drive.google.com/your-resume-link",
+  "college": "My College Name",
+  "gender": "Male",
+  "relocate": "Yes",
+  "lastUpdated": 1690000000000
+}

@@ -1,0 +1,490 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Placement Form Autofill — Profile</title>
+    <style>
+      body {
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        padding: 12px;
+        width: 320px;
+        margin: 0;
+        background: var(--bg-color);
+        color: var(--text-color);
+        min-height: 400px;
+        display: flex;
+        flex-direction: column;
+      }
+      
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+        background: var(--bg-elevated);
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--border-color);
+      }
+
+      .profile-cards {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 12px;
+        flex: 1;
+        overflow-y: auto;
+        max-height: 280px;
+      }
+
+      .profile-card {
+        background: var(--bg-elevated);
+        border-radius: 8px;
+        padding: 10px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        border: 1px solid var(--border-color);
+        user-select: none;
+        position: relative;
+      }
+
+      .profile-card:hover {
+        background: var(--bg-elevated-hover);
+        border-color: var(--border-color-hover);
+      }
+
+      .profile-card.selected {
+        background: var(--bg-elevated-hover);
+        border: 1px solid var(--accent-color);
+        box-shadow: 0 0 0 1px var(--accent-color);
+      }
+
+      .card-menu {
+        position: absolute;
+        right: 8px;
+        top: 50%;
+        transform: translateY(-50%);
+        opacity: 0;
+        transition: opacity 0.2s;
+        background: var(--bg-elevated);
+        border-radius: 4px;
+        padding: 2px;
+      }
+
+      .profile-card:hover .card-menu {
+        opacity: 1;
+      }
+
+      .menu-button {
+        background: none;
+        border: none;
+        color: var(--text-color);
+        padding: 4px 8px;
+        cursor: pointer;
+        opacity: 0.7;
+      }
+
+      .menu-button:hover {
+        opacity: 1;
+      }
+
+      .menu-dropdown {
+        position: absolute;
+        right: 0;
+        top: 100%;
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        display: none;
+        z-index: 10;
+      }
+
+      .menu-dropdown.show {
+        display: block;
+      }
+
+      .menu-item {
+        padding: 8px 16px;
+        color: var(--text-color);
+        cursor: pointer;
+        white-space: nowrap;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+      }
+
+      .menu-item:hover {
+        background: var(--bg-elevated-hover);
+      }
+
+      .profile-icon {
+        width: 32px;
+        height: 32px;
+        background: #252525;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #4a4af7;
+        font-size: 14px;
+        font-weight: 600;
+        border: 1px solid #2a2a2a;
+      }
+
+      .profile-info {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .profile-name {
+        font-weight: 500;
+        margin-bottom: 2px;
+        color: var(--text-color);
+        font-size: 14px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .profile-meta {
+        font-size: 12px;
+        color: var(--text-secondary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* Floating contextual menu appended to body (avoids clipping inside scrollable list) */
+      .floating-menu {
+        position: fixed;
+        z-index: 2000;
+        min-width: 160px;
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        box-shadow: 0 6px 20px rgba(0,0,0,0.2);
+        overflow: hidden;
+      }
+      .floating-menu .menu-item { display: block; padding: 8px 12px; cursor: pointer; color: var(--text-color); }
+      .floating-menu .menu-item:hover { background: var(--bg-elevated-hover); }
+
+      /* Popup preview overlay (renders inside extension popup) */
+      #popupPreview {
+        position: relative;
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 8px;
+        margin-bottom: 8px;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+        max-height: 240px;
+        overflow: auto;
+      }
+      #popupPreview .preview-title { font-weight:600; margin-bottom:6px; }
+      #popupPreview .preview-row { display:flex; gap:8px; align-items:flex-start; padding:6px 0; border-bottom:1px solid rgba(0,0,0,0.04); }
+      #popupPreview .preview-row:last-child { border-bottom: none; }
+
+      .button-container {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      .action-button {
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 8px 12px;
+        color: var(--text-color);
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        font-size: 13px;
+      }
+
+      .action-button:hover {
+        background: #202020;
+        border-color: #3a3a3a;
+      }
+
+      .action-button.primary {
+        background: #4a4af7;
+        border-color: #4a4af7;
+      }
+
+      .action-button.primary:hover {
+        background: #5a5af8;
+        border-color: #5a5af8;
+      }
+
+      .form-container {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: var(--bg-color);
+        z-index: 100;
+      }
+
+      .form-container.visible {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .form-header {
+        display: flex;
+        align-items: center;
+        padding: 12px;
+        border-bottom: 1px solid var(--border-color);
+      }
+
+      .back-button {
+        background: none;
+        border: none;
+        color: var(--text-color);
+        padding: 4px 8px;
+        cursor: pointer;
+        font-size: 20px;
+        margin-right: 8px;
+      }
+
+      .form-content {
+        flex: 1;
+        overflow-y: auto;
+        padding: 16px;
+      }
+
+      label {
+        display: block;
+        margin-top: 10px;
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+
+      /* Theme variables */
+      :root {
+        --bg-color: #141414;
+        --bg-elevated: #1a1a1a;
+        --bg-elevated-hover: #202020;
+        --border-color: #2a2a2a;
+        --border-color-hover: #3a3a3a;
+        --text-color: #fff;
+        --text-secondary: #888;
+        --accent-color: #4a4af7;
+        --accent-hover: #5a5af8;
+      }
+
+      /* Light theme */
+      [data-theme="light"] {
+        --bg-color: #f5f5f5;
+        --bg-elevated: #ffffff;
+        --bg-elevated-hover: #f8f8f8;
+        --border-color: #e0e0e0;
+        --border-color-hover: #ccc;
+        --text-color: #000;
+        --text-secondary: #666;
+        --accent-color: #4a4af7;
+        --accent-hover: #5a5af8;
+      }
+
+      input, textarea, select {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px 10px;
+        margin-top: 4px;
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        color: var(--text-color);
+        transition: all 0.2s ease;
+        font-size: 13px;
+      }
+
+      input:focus, textarea:focus, select:focus {
+        outline: none;
+        border-color: var(--accent-color);
+        background: var(--bg-elevated-hover);
+      }
+
+      input::placeholder, textarea::placeholder {
+        color: var(--text-secondary);
+      }
+
+      select {
+        appearance: none;
+        background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23666666%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E");
+        background-repeat: no-repeat;
+        background-position: right 10px center;
+        background-size: 10px;
+        padding-right: 30px;
+        color: var(--text-color);
+        background-color: var(--bg-elevated);
+      }
+
+      select option {
+        background: var(--bg-elevated);
+        color: var(--text-color);
+      }
+
+      button {
+        padding: 10px 20px;
+        border-radius: 8px;
+        border: none;
+        cursor: pointer;
+        font-weight: 600;
+        transition: all 0.15s ease;
+        background: var(--bg-elevated);
+        color: var(--text-color);
+        border: 1px solid var(--border-color);
+      }
+
+      button.primary {
+        background: var(--accent-color);
+        color: #fff;
+        border: 1px solid var(--accent-color);
+      }
+
+      button.secondary {
+        background: var(--bg-elevated);
+        color: var(--text-color);
+        border: 1px solid var(--border-color);
+      }
+
+      button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 12px rgba(0,0,0,0.08);
+      }
+
+      .note {
+        font-size: 11px;
+        color: rgba(255, 255, 255, 0.7);
+        margin-top: 8px;
+      }
+      
+    </style>
+  </head>
+  <body>
+  <div id="mainView">
+    <div class="header">
+      <h2 style="margin:0">Your Profiles</h2>
+      <div style="display:flex;gap:12px;align-items:center">
+        <button id="themeToggle" class="theme-toggle" title="Toggle theme">
+          <span class="theme-icon">☀</span>
+        </button>
+        <label style="margin:0">
+          <input id="injectionToggle" type="checkbox" style="width:auto;margin:0 8px 0 0"> 
+          Enable
+        </label>
+      </div>
+    </div>
+
+    <div id="popupPreview" style="display:none"></div>
+
+    <div class="profile-cards" id="profileList">
+      <!-- Profile cards will be inserted here -->
+    </div>
+
+    <div class="button-container">
+      <button class="action-button" id="createProfileBtn">
+        <span style="margin-right:8px">+</span> New Profile
+      </button>
+      <button class="action-button primary" id="autofillBtn">
+        Autofill Form
+      </button>
+    </div>
+  </div>
+
+  <!-- duplicate profile list and buttons removed -->
+
+  <div id="formView" style="display:none">
+    <div class="form-header">
+      <button class="back-button" id="backButton" type="button">←</button>
+      <h3 style="margin:0">Edit Profile</h3>
+    </div>
+    <div class="form-content">
+      <form id="profileForm">
+        <label>Profile Name
+          <input type="text" id="profileName" required placeholder="Name your profile" />
+        </label>
+      <label>Full Name
+        <input type="text" id="fullName" required placeholder="Your full name" />
+      </label>
+      <label>Email
+        <input type="email" id="email" required placeholder="you@example.com" />
+      </label>
+      <label>Phone Number
+        <input type="tel" id="phone" required placeholder="+91-9XXXXXXXXX" />
+      </label>
+      <label>College Roll Number
+        <input type="text" id="rollNo" required placeholder="Roll number" />
+      </label>
+      <label>CGPA
+        <input type="text" id="cgpa" placeholder="8.5" />
+      </label>
+      <label>10th Percentage
+        <input type="text" id="tenthPercent" placeholder="95" />
+      </label>
+      <label>12th Percentage
+        <input type="text" id="twelfthPercent" placeholder="92" />
+      </label>
+      <label>Resume Link
+        <input type="url" id="resumeLink" placeholder="https://drive.google.com/..." />
+      </label>
+      <label>College
+        <input type="text" id="college" placeholder="College name" />
+      </label>
+      <label>Branch
+        <select id="branch" required>
+          <option value="">Choose...</option>
+          <option value="CSE">Computer Science</option>
+          <option value="ECE">Electronics</option>
+          <option value="ME">Mechanical</option>
+          <option value="IT">Information Technology</option>
+        </select>
+      </label>
+      <label>Graduation Year
+        <input type="text" id="graduationYear" placeholder="2024" />
+      </label>
+      <label>Gender
+        <select id="gender">
+          <option value="">-- choose --</option>
+          <option value="Male">Male</option>
+          <option value="Female">Female</option>
+          <option value="Other">Other</option>
+        </select>
+      </label>
+      <label>Are you willing to relocate?
+        <select id="relocate">
+          <option value="">-- choose --</option>
+          <option value="Yes">Yes</option>
+          <option value="No">No</option>
+        </select>
+      </label>
+
+      <div style="margin-top:24px">
+        <button type="button" id="pasteBtn" class="secondary" style="width:100%;margin-bottom:16px">
+          <span style="margin-right:8px">📋</span> Paste Profile Data
+        </button>
+        
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button type="button" id="cancelEdit" class="secondary">Cancel</button>
+          <button type="submit" class="primary">Save Profile</button>
+        </div>
+      </div>
+    </form>
+    <div id="status" class="note"></div>
+    <div class="note">Your profiles are stored locally in your browser.</div>
+  </div>
+  <script src="popup_new.js"></script>
+  <!-- Confirmation modal removed: delete is immediate -->
+  </body>
+</html>

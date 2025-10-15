@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Placement Profile",
+  "type": "object",
+  "properties": {
+    "version": {"type":"integer"},
+    "fullName": {"type":"string"},
+    "email": {"type":"string","format":"email"},
+    "phone": {"type":"string"},
+    "rollNo": {"type":"string"},
+    "cgpa": {"type":"string"},
+    "tenthPercent": {"type":"string"},
+    "twelfthPercent": {"type":"string"},
+    "resumeLink": {"type":"string","format":"uri"},
+    "college": {"type":"string"},
+    "lastUpdated": {"type":"integer"}
+  },
+  "required": ["version","fullName","email"]
+}
