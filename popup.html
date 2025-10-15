@@ -210,8 +210,10 @@
       }
 
       .action-button:hover {
-        background: #202020;
-        border-color: #3a3a3a;
+        background: var(--bg-elevated-hover);
+        border-color: var(--border-color-hover);
+        transform: translateY(-1px);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
       }
 
       .action-button.primary {
@@ -468,6 +470,34 @@
           <option value="Yes">Yes</option>
           <option value="No">No</option>
         </select>
+      </label>
+
+      <label>City
+        <input type="text" id="city" placeholder="City" />
+      </label>
+
+      <label>Highest qualification
+        <input type="text" id="highestQualification" placeholder="B.Tech / M.Tech / BSc / MBA" />
+      </label>
+
+      <label>Do you have any backlogs?
+        <select id="hasBacklogs">
+          <option value="">-- choose --</option>
+          <option value="No">No</option>
+          <option value="Yes">Yes</option>
+        </select>
+      </label>
+
+      <label>Number of backlogs
+        <input type="number" id="backlogCount" placeholder="0" min="0" />
+      </label>
+
+      <label>Date of Birth
+        <input type="date" id="dob" />
+      </label>
+
+      <label>Nationality
+        <input type="text" id="nationality" placeholder="Nationality (e.g. India)" />
       </label>
 
       <div style="margin-top:24px">

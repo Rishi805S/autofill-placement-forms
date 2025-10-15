@@ -319,32 +319,29 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    getProfiles((map) => {
-      const profile = map[currentProfile];
-      if (!profile) {
-        setStatus('Selected profile not found', true);
+    // Send message to content script to autofill
+    chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
+      if (!tabs[0] || !tabs[0].id) {
+        setStatus('Error: Could not access current tab', true);
         return;
       }
-
-      // Trigger the content script to autofill the form
-      chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
-        if (!tabs[0]) {
-          setStatus('No active tab found', true);
+      
+      chrome.tabs.sendMessage(tabs[0].id, {
+        action: 'autofill',
+        profile: currentProfile
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          setStatus('Error: ' + chrome.runtime.lastError.message, true);
           return;
         }
         
-        chrome.tabs.sendMessage(tabs[0].id, {
-          action: "autofill",
-          profile: profile
-        }, response => {
-          if (chrome.runtime.lastError) {
-            setStatus('Error: Make sure you are on a placement form page', true);
-          } else if (response && response.success) {
-            setStatus('Form filled successfully!');
-          } else {
-            setStatus('Failed to fill form', true);
-          }
-        });
+        if (response && response.success) {
+          setStatus('Form filled successfully!', false);
+          // Close popup after successful fill
+          setTimeout(() => window.close(), 1000);
+        } else {
+          setStatus(response?.error || 'Failed to fill form', true);
+        }
       });
     });
   });

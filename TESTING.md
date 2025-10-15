@@ -1,48 +1,317 @@
-Placement Form Autofill — Testing & QA
+# Placement Form Autofill — Testing & QA Guide
 
-This document describes how to run manual tests and the matcher browser tests without requiring npm. It includes sample pages you can open locally and steps to exercise the extension behaviors.
+This document provides comprehensive testing procedures for the Placement Form Autofill extension, including automated tests, manual testing workflows, and troubleshooting tips.
 
-Files added for testing
-- `sample_form_basic.html` — A small Google-Forms-like page with text inputs, radio buttons, selects, and textarea.
-- `sample_form_advanced.html` — More fields: percentage, CGPA, checkboxes, resume link, etc.
-- `matcher_test.html` — (already in repository) Browser-run matcher unit-like tests.
+## Test Files Overview
 
-Quick manual test (no server required)
-1. Open `chrome://extensions` in Chrome and enable "Developer mode".
-2. Click "Load unpacked" and select the extension directory `c:\Users\Rishi\Documents\AutoFill Placement Forms`.
-3. Open the file `sample_form_basic.html` in Chrome. Use File → Open File or drag-and-drop the file into the browser. Note: content scripts run on file:// URLs only if the extension has host permissions — instead, host the file using a quick local server if the content script doesn't inject automatically (see next section).
+The project includes several test files:
 
-Running with a simple local server (recommended)
-- On Windows PowerShell, run:
+- **`sample_form_basic.html`** — Simple test form with common fields (name, email, phone, etc.)
+- **`sample_form_advanced.html`** — Complex form with education fields, percentages, CGPA, checkboxes, and more
+- **`matcher_test.html`** — Browser-based unit tests for the matching algorithm
+- **`tests/` directory** — Jest unit tests for the matcher module
+
+## Setup
+
+### 1. Load the Extension
+
+1. Open `chrome://extensions` in Chrome
+2. Enable "Developer mode" (toggle in top-right)
+3. Click "Load unpacked"
+4. Select the extension directory: `AutoFill Placement Forms`
+
+### 2. Start Local Server (Recommended)
+
+Running a local server ensures content scripts inject properly:
 
 ```powershell
-# from the workspace root
+# Navigate to project directory
 cd 'C:\Users\Rishi\Documents\AutoFill Placement Forms'
-# Python 3 simple HTTP server
+
+# Start Python HTTP server
 py -3 -m http.server 8000
-# or if python launcher not installed
+# OR
 python -m http.server 8000
 ```
 
-- Open `http://localhost:8000/sample_form_basic.html` in Chrome.
-- The extension's content script should auto-inject a floating Autofill control in the top-right of the page.
+The server will be available at `http://localhost:8000`
 
-Testing steps
-- With a saved profile in the popup (load or create one), click the injected Autofill button.
-- A preview overlay should appear listing detected fields and proposed values. Review and click "Apply selected".
-- Observe that text inputs/textarea are populated and radio/select/checkboxes are selected where appropriate. Fields that were skipped due to low confidence remain unchanged.
+## Manual Testing Workflow
 
-Matcher tests
-- Open `matcher_test.html` in the browser (e.g. http://localhost:8000/matcher_test.html).
-- The page runs matcher cases and shows pass/fail counts and individual scores. Use it to iterate on `matcher.js`.
+### Test 1: Basic Profile Creation
 
-Notes & troubleshooting
-- If the injected UI doesn't appear on file:// paths, run a local server as described above.
-- If the extension doesn't load, ensure `manifest.json` has no invalid icon entries and that you selected the correct directory.
-- For more advanced automated testing, we can add Jest + Playwright in a follow-up step (requires npm).
+1. Click the extension icon in Chrome toolbar
+2. Click "+ New Profile" button
+3. Fill in profile details:
+   - Profile name: "Test Profile"
+   - Full name: "John Doe"
+   - Email: "john@example.com"
+   - Phone: "+1234567890"
+   - Other fields as needed
+4. Click "Save Profile"
+5. **Expected**: Profile appears in the list, status shows "Saved profile"
 
-Next steps
-- Convert `matcher_test.html` to a Jest unit suite if you'd like automated runs. I can scaffold `package.json` and a minimal test runner when you allow using npm locally.
+### Test 2: Basic Form Autofill
 
-Contact
-- If tests fail, paste the console logs or a screenshot and I will triage the matching behavior and update heuristics in `matcher.js`.
+1. Open `http://localhost:8000/sample_form_basic.html`
+2. **Expected**: Floating autofill button appears (bottom-right or adjusted position)
+3. Select a profile from the dropdown (if visible)
+4. Click the "Autofill" button
+5. **Expected**: Preview overlay appears showing detected fields
+6. Review the matches and values
+7. Click "Apply selected" or "Apply"
+8. **Expected**: Form fields are filled with profile data
+
+### Test 3: Advanced Form Fields
+
+1. Open `http://localhost:8000/sample_form_advanced.html`
+2. Use the autofill functionality
+3. **Verify**:
+   - Text inputs are filled
+   - Dropdowns are selected correctly
+   - Radio buttons are selected
+   - Checkboxes are checked if applicable
+   - CGPA, percentages filled correctly
+
+### Test 4: Profile Import/Export
+
+1. Open the extension popup
+2. Click on a profile's menu (⋮ or similar)
+3. Select "Export" or click export button
+4. **Expected**: JSON file downloads
+5. Click "Import" button
+6. Select the downloaded JSON file
+7. **Expected**: Profile is imported successfully
+
+### Test 5: Multiple Profiles
+
+1. Create 3 different profiles with different data
+2. Switch between forms
+3. Test autofilling with each profile
+4. **Verify**: Correct data is filled for each profile
+
+## Automated Testing
+
+### Unit Tests (Jest)
+
+Run matcher algorithm tests:
+
+```powershell
+# Install dependencies (first time only)
+npm install
+
+# Run tests
+npm test
+
+# Run tests in watch mode
+npm test -- --watch
+```
+
+**Expected output**: All tests pass with match scores displayed
+
+### Browser-Based Matcher Tests
+
+1. Open `http://localhost:8000/matcher_test.html`
+2. Tests run automatically
+3. **Review**:
+   - Pass/fail counts
+   - Individual test scores
+   - Match confidence levels
+
+## Testing Checklist
+
+### Functionality Tests
+
+- [ ] Profile creation
+- [ ] Profile editing
+- [ ] Profile deletion
+- [ ] Profile import
+- [ ] Profile export
+- [ ] Dark/light theme toggle
+- [ ] Form field detection
+- [ ] Field value filling
+- [ ] Preview overlay display
+- [ ] Apply autofill action
+- [ ] Injection toggle (enable/disable)
+
+### Field Type Tests
+
+- [ ] Text inputs (single-line)
+- [ ] Textarea (multi-line)
+- [ ] Email inputs
+- [ ] Number inputs
+- [ ] Dropdown/select elements
+- [ ] Radio buttons
+- [ ] Checkboxes
+- [ ] URL/link inputs
+
+### Edge Cases
+
+- [ ] Empty profile fields
+- [ ] Special characters in data
+- [ ] Very long text values
+- [ ] Forms with no matching fields
+- [ ] Forms with many matching fields
+- [ ] Partial form matches
+- [ ] Multiple forms on same page
+
+### Browser Compatibility
+
+- [ ] Chrome (latest)
+- [ ] Chrome (one version back)
+- [ ] Edge (Chromium-based)
+
+### Performance Tests
+
+- [ ] Extension loads quickly
+- [ ] Popup opens smoothly
+- [ ] Autofill completes in < 2 seconds
+- [ ] No memory leaks after repeated use
+
+## Live Form Testing
+
+### Google Forms
+
+1. Create a test Google Form or use an existing one
+2. Navigate to the form URL
+3. Test autofill functionality
+4. **Verify**:
+   - Content script injects properly
+   - Fields are detected
+   - Values are filled correctly
+
+### Common Form Types to Test
+
+- Company job application forms
+- College placement forms
+- Survey forms
+- Registration forms
+
+## Troubleshooting
+
+### Issue: Content Script Not Injecting
+
+**Symptoms**: No autofill button appears on the page
+
+**Solutions**:
+1. Check "Enable injection" toggle in popup
+2. Verify form URL matches `manifest.json` patterns
+3. Refresh the page
+4. Check browser console for errors
+5. Ensure extension is loaded in developer mode
+
+### Issue: Fields Not Matching
+
+**Symptoms**: Preview shows no or few matches
+
+**Solutions**:
+1. Check field labels in the form
+2. Add aliases to `matcher.js` for custom labels
+3. Review matching scores in console
+4. Test with `matcher_test.html`
+
+### Issue: Values Not Filling
+
+**Symptoms**: Preview works but fields don't fill
+
+**Solutions**:
+1. Check browser console for errors
+2. Verify field types are supported
+3. Test with simple forms first
+4. Check if form uses custom input components
+
+### Issue: Extension Won't Load
+
+**Symptoms**: Extension doesn't appear in Chrome
+
+**Solutions**:
+1. Check for manifest errors
+2. Verify all files are present
+3. Ensure icon files exist
+4. Try reloading the extension
+
+## Debugging Tips
+
+### Enable Verbose Logging
+
+Add to content.js or matcher.js:
+```javascript
+const DEBUG = true;
+if (DEBUG) console.log('Debug info:', data);
+```
+
+### Inspect Content Script
+
+1. Right-click on the page (not the extension icon)
+2. Select "Inspect"
+3. Go to Console tab
+4. Filter by "content.js" or "autofill"
+
+### Inspect Popup
+
+1. Right-click the extension icon
+2. Select "Inspect popup"
+3. Console tab shows popup errors
+
+### View Storage
+
+```javascript
+// Run in popup console
+chrome.storage.local.get('profilesV1', (data) => {
+  console.log(data);
+});
+```
+
+## Test Data
+
+### Sample Profile 1 - Student
+```json
+{
+  "fullName": "Rishi Kumar",
+  "email": "rishi@example.com",
+  "phone": "+91-9876543210",
+  "rollNo": "20CS001",
+  "cgpa": "8.5",
+  "tenthPercent": "92",
+  "twelfthPercent": "88",
+  "college": "ABC College of Engineering",
+  "branch": "Computer Science",
+  "gender": "Male",
+  "relocate": "Yes",
+  "resumeLink": "https://drive.google.com/resume"
+}
+```
+
+### Sample Profile 2 - Graduate
+```json
+{
+  "fullName": "Jane Smith",
+  "email": "jane.smith@example.com",
+  "phone": "+1-555-0123",
+  "rollNo": "18ME045",
+  "cgpa": "9.2",
+  "tenthPercent": "95",
+  "twelfthPercent": "94",
+  "college": "XYZ Institute of Technology",
+  "branch": "Mechanical Engineering",
+  "gender": "Female",
+  "relocate": "No",
+  "resumeLink": "https://linkedin.com/in/janesmith"
+}
+```
+
+## Reporting Issues
+
+When reporting test failures, include:
+1. Steps to reproduce
+2. Expected vs actual behavior
+3. Browser version
+4. Console error messages
+5. Screenshots if applicable
+
+## Next Steps
+
+- [ ] Add Playwright E2E tests
+- [ ] Set up CI/CD pipeline
+- [ ] Add performance benchmarks
+- [ ] Create automated regression test suite
