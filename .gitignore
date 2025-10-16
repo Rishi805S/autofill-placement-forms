@@ -37,3 +37,7 @@ desktop.ini
 # Ignore other
 *.bak
 *.swp
+# Ignore generated archives and large builds
+*.zip
+# Ignore production PNG icons (keep SVG sources)
+icons/*_prod.png

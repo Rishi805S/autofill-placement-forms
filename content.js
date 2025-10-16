@@ -17,6 +17,7 @@
 */
 
 // Common styles used across UI components
+// What are these 
 const CommonStyles = {
   overlayBase: {
     position: 'fixed',
@@ -197,8 +198,9 @@ function populateInlineProfileSelect(map, last){
 }
 
 function ensureButton(){
-  if(!isSupportedForm()) return;
-  if(document.getElementById('placement-autofill-btn')) return;
+  // Disabled in-page floating UI injection to avoid modifying host pages.
+  // The popup will be the single entrypoint for autofill actions.
+  return;
   // container to hold button + profile selector
   const container = document.createElement('div');
   container.id = 'placement-autofill-container';
@@ -374,53 +376,8 @@ function adjustAutofillContainer(){
 }
 
 function onAutofillClicked(){
-  chrome.storage.local.get(['profilesV1'], (res)=>{
-    const profiles = res['profilesV1'];
-      if(!profiles){
-      alert('No profile found. Please open the extension popup and save your profile first.');
-      // check global toggle
-      try{
-        chrome.storage.local.get(['injectionEnabled'], (res)=>{
-          const enabled = typeof res.injectionEnabled === 'undefined' ? true : !!res.injectionEnabled;
-          if(!enabled) return;
-          if(!isSupportedForm()) return;
-          if(document.getElementById('placement-autofill-btn')) return;
-          ensureButton();
-        });
-        return;
-      }catch(e){ /* fallback to direct behavior */ }
-      if(!isSupportedForm()) return;
-      if(document.getElementById('placement-autofill-btn')) return;
-      ensureButton();
-    }
-    const names = Object.keys(profiles || {});
-    if(names.length === 0){ alert('No profiles saved.'); return; }
-    // try to read lastUsedProfile
-    chrome.storage.local.get(['lastUsedProfile'], (r)=>{
-      const last = r && r.lastUsedProfile;
-      if(last && profiles[last]){
-        const profile = profiles[last];
-        let candidates = computeCandidatesForProfile(profile);
-        if(candidates.length === 0){
-          // try a relaxed pass which uses simpler label keyword search
-          candidates = computeRelaxedCandidatesForProfile(profile);
-        }
-        if(candidates.length === 0){ alert('No fields could be confidently matched.'); return; }
-        showPreviewOverlay(candidates, profile, last);
-        return;
-      }
-      if(names.length === 1){
-        const profile = profiles[names[0]];
-        let candidates = computeCandidatesForProfile(profile);
-        if(candidates.length === 0){ candidates = computeRelaxedCandidatesForProfile(profile); }
-        if(candidates.length === 0){ alert('No fields could be confidently matched.'); return; }
-        showPreviewOverlay(candidates, profile, names[0]);
-        return;
-      }
-      // multiple profiles: show chooser first
-      showProfileChooser(profiles);
-    });
-  });
+  // on-page autofill button click is disabled. Use extension popup to trigger autofill.
+  console.log('[AutoFill] onAutofillClicked ignored (in-page UI disabled).');
 }
 
 function computeCandidatesForProfile(profile){
@@ -509,48 +466,59 @@ function computeCandidatesForProfile(profile){
       if(val) matchedField = 'fallback';
     }
     const options = Array.from(sel.options).map(o=>({value:o.value, label:o.text}));
-    // pick best option by direct match first (value or label), then token similarity
-    let chosen = null;
+    // prepare canonical forms for labels/values
+    const optionLabels = options.map(o=>o.label || '');
+    const optionCanons = optionLabels.map(l=>canonicalize(l));
+    const labelCanon = canonicalize(label);
+
+    // backlog numeric handling: prefer numeric match when label suggests backlog
+    const isBacklogQuestion = /backlog|arrear|active backlog|active backlogs|no of backlogs|number of backlogs/i.test(label);
+    if(isBacklogQuestion && profile.backlogCount!=null){
+      const desired = String(profile.backlogCount).trim();
+      let idx = optionLabels.findIndex(l=>String(l).includes(desired));
+      if(idx === -1){ idx = optionCanons.findIndex(c=>c.includes(canonicalize(desired)) || c === canonicalize(desired)); }
+      if(idx !== -1){
+        const chosen = options[idx];
+        matchedLabels.push(label);
+        candidates.push({type:'select', el: sel, label, key: matchedField || 'backlogCount', chosen, options, score: 100});
+        return; // continue to next select
+      }
+    }
+
+    // pick best option by scoring canonical token overlap (also consider acronyms)
+    let chosen = null; let bestScore = 0; let chosenIdx = -1;
     if(matchedField && profile[matchedField]){
       const pvRaw = String(profile[matchedField]);
-      const pv = pvRaw.toLowerCase().trim();
-      // try exact match on option value or label
-      chosen = options.find(opt => (String(opt.value||'').toLowerCase() === pv) || (String(opt.label||'').toLowerCase() === pv));
-      if(!chosen){
-        // fallback to token overlap on label and value
-        let bestScore = 0;
-        options.forEach(opt=>{
-          const label = String(opt.label||'').toLowerCase();
-          const value = String(opt.value||'').toLowerCase();
-          const s1 = tokenOverlapScore(pv, label);
-          const s2 = tokenOverlapScore(pv, value);
-          const s = Math.max(s1, s2);
-          if(s > bestScore){ bestScore = s; chosen = opt; }
+      const pvCanon = canonicalize(pvRaw);
+      const pvAcr = acronymize(pvRaw);
+      // try exact canonical match
+      chosenIdx = optionCanons.findIndex(c=>c === pvCanon);
+      if(chosenIdx === -1){
+        // fallback to token overlap on canonical forms
+        optionCanons.forEach((c, i)=>{
+          let s = tokenOverlapScore(pvCanon, c);
+          // acronym match boost
+          const optAcr = acronymize(optionLabels[i] || '');
+          if(pvAcr && optAcr && pvAcr === optAcr) s += 5;
+          if(s > bestScore){ bestScore = s; chosenIdx = i; }
         });
       }
     }
-    // If no chosen option yet, try matching option labels against high-priority profile fields (branch, college, qualification...)
-    if(!chosen){
-      const pCandidates = getProfileMatchCandidates(profile);
-      let best = null; let bestScore = 0;
-      options.forEach(opt=>{
-        const ol = String(opt.label||'').toLowerCase();
-        const ov = String(opt.value||'').toLowerCase();
-        pCandidates.forEach(pc=>{
-          const score = Math.max(tokenOverlapScore(pc.val, ol), tokenOverlapScore(pc.val, ov));
-          if(score > bestScore){ bestScore = score; best = opt; }
-        });
-      });
-      // require at least one token overlap to avoid accidental matches
-      if(bestScore > 0) chosen = best;
+
+    // If still no chosen option, try matching against prioritized profile fields
+    if(chosenIdx === -1){
+      const pCandidates = getProfileMatchCandidates(profile).map(pc=>({key:pc.key, val: canonicalize(pc.val)}));
+  pCandidates.forEach(pc=>{ const pcCanon = canonicalize(pc.val); const pcAcr = acronymize(pc.val); optionCanons.forEach((c,i)=>{ let s = tokenOverlapScore(pcCanon, c); const optAcr = acronymize(optionLabels[i] || ''); if(pcAcr && optAcr && pcAcr === optAcr) s += 5; if(s > bestScore){ bestScore = s; chosenIdx = i; } }); });
     }
-    if(chosen){
+
+    if(chosenIdx !== -1 && options[chosenIdx]){
+      chosen = options[chosenIdx];
       // graduation year: prefer numeric match if applicable
       const rl = (rootLabel||'').toLowerCase();
       if((rl.includes('graduat') || rl.includes('passing') || rl.includes('yop') || rl.includes('year')) && profile.graduationYear){
         const target = String(profile.graduationYear);
-        const exact = options.find(o=> (String(o.label||'').includes(target)) || (String(o.value||'').includes(target)) );
-        if(exact){ chosen = exact; }
+        const exactIdx = options.findIndex(o=> (String(o.label||'').includes(target)) || (String(o.value||'').includes(target)) );
+        if(exactIdx !== -1) { chosen = options[exactIdx]; }
       }
       matchedLabels.push(label);
       candidates.push({type:'select', el: sel, label, key: matchedField || 'fallback', chosen, options, score: (chosen?50:0)});
@@ -586,10 +554,25 @@ function computeCandidatesForProfile(profile){
       if(res && res.key) matchedField = res.key;
     }
     if(!matchedField){ const val = simpleMatch(label, profile); if(val) matchedField = 'fallback'; }
-  // choose option best matching profile values (gender, relocate, graduationYear, or matchedField)
+    // Guard: avoid auto-selecting generic Yes/No radio groups unless the question text indicates a boolean
+    try{
+      const optionLabels = options.map(o=> (o.label||'').toLowerCase().trim());
+      if(isGenericYesNoOptions(optionLabels)){
+        const isBoolLabel = labelLooksBoolean(label);
+        const allowedBooleanKeys = new Set(['relocate','hasBacklogs','attendInterview','canAttendInterview','availability','available','willing']);
+        const matchedKeyIsBoolean = matchedField && allowedBooleanKeys.has(matchedField);
+        if(!isBoolLabel && !matchedKeyIsBoolean){
+          // skip this generic yes/no question to avoid false positives
+          return;
+        }
+      }
+    }catch(e){}
+  // choose option best matching profile values (gender, relocate, graduationYear, backlogCount, or matchedField)
   let chosen = null;
   let bestScore = 0;
   const qLower = (label || '').toLowerCase();
+  // prepare canonical option labels
+  const optionCanons = options.map(o=>canonicalize(o.label || ''));
     try{
       // collect candidate profile values to consider (in order)
       const candidatesToCheck = [];
@@ -599,6 +582,9 @@ function computeCandidatesForProfile(profile){
       pCandidates.forEach(pc=>{ // only add if not duplicate key
         if(!candidatesToCheck.some(x=>x.key===pc.key)) candidatesToCheck.push({key: pc.key, val: pc.val});
       });
+      // backlog numeric: if this looks like a backlog question, consider backlogCount as high priority
+      const isBacklogQuestion = /backlog|arrear|active backlog|active backlogs|no of backlogs|number of backlogs/i.test(label);
+      if(isBacklogQuestion && profile.backlogCount!=null){ candidatesToCheck.unshift({key:'backlogCount', val: String(profile.backlogCount)}); }
       // if option labels contain explicit gender tokens, allow gender to be considered even if question label is generic
       try{
         const genderTokenPresent = options.some(o=>{ const t = String((o.label||'')).toLowerCase(); return /\b(male|female|man|woman|m\b|f\b)\b/.test(t); });
@@ -628,11 +614,13 @@ function computeCandidatesForProfile(profile){
       function normalizeOptLabel(s){ if(!s) return ''; return String(s).replace(/\s+/g,' ').trim().toLowerCase(); }
       const isQuestionGraduation = /graduat|pass|yop|year|batch|passing out/.test(qLower);
 
-      // evaluate each option against candidate values
-  options.forEach(opt=>{
-        const rawLabel = (opt.label||'');
-        const norm = normalizeOptLabel(rawLabel);
-        const optValue = String(opt.value||'').toLowerCase();
+  // evaluate each option against candidate values
+  options.forEach((opt, optIndex)=>{
+    const rawLabel = (opt.label||'');
+    const norm = normalizeOptLabel(rawLabel);
+    const optValue = String(opt.value||'').toLowerCase();
+    const optCanon = optionCanons[optIndex];
+    const optAcr = acronymize(rawLabel || optValue);
         // skip obvious 'other' option unless profile explicitly requests Other
         const isOther = /(^|\s)other(\s|$)|other response|other:\b/.test(norm);
         let localBest = 0;
@@ -672,8 +660,14 @@ function computeCandidatesForProfile(profile){
             }
           }
 
-          // general token overlap
-          const overlap = tokenOverlapScore(pv, norm);
+          // exact canonical match
+          const pvCanon = canonicalize(pv);
+          if(pvCanon && optCanon && (pvCanon === optCanon || optCanon.includes(pvCanon) || pvCanon.includes(optCanon))){ localBest = Math.max(localBest, 300); localKey = c.key; }
+          // acronym match (e.g., jntu vs jawaharlal nehru technological university)
+          const pvAcr = acronymize(pv);
+          if(pvAcr && optAcr && pvAcr === optAcr){ localBest = Math.max(localBest, 280); localKey = c.key; }
+          // general token overlap (on canonical forms)
+          const overlap = tokenOverlapScore(pvCanon, optCanon || norm);
           if(overlap>0) { localBest = Math.max(localBest, overlap * 12); if(!localKey) localKey = c.key; }
         }
 
@@ -739,6 +733,18 @@ function computeCandidatesForProfile(profile){
       if(res && res.key) matchedField = res.key;
     }
     if(!matchedField){ const val = simpleMatch(label, profile); if(val) matchedField = 'fallback'; }
+    // For checkbox groups, skip generic yes/no sets unless label indicates boolean intent
+    try{
+      const optLabels = options.map(o=> (o.label||'').toLowerCase().trim());
+      if(isGenericYesNoOptions(optLabels)){
+        const isBoolLabel = labelLooksBoolean(label);
+        const allowedBooleanKeys = new Set(['relocate','hasBacklogs','attendInterview','canAttendInterview','availability','available','willing']);
+        const matchedKeyIsBoolean = matchedField && allowedBooleanKeys.has(matchedField);
+        if(!isBoolLabel && !matchedKeyIsBoolean){
+          return; // skip
+        }
+      }
+    }catch(e){}
     // For checkboxes, match any option tokens present in profile[matchedField]
     const chosen = [];
     if(matchedField && profile[matchedField]){
@@ -748,7 +754,14 @@ function computeCandidatesForProfile(profile){
     if(chosen.length === 0){
       const pCandidates3 = getProfileMatchCandidates(profile);
       if(pCandidates3 && pCandidates3.length>0){
-        pCandidates3.forEach(pc=>{ options.forEach(opt=>{ if(tokenOverlapScore(pc.val, (opt.label||'').toLowerCase())>0) chosen.push(opt); }); });
+        pCandidates3.forEach(pc=>{
+          const pcCanon = canonicalize(pc.val); const pcAcr = acronymize(pc.val);
+          options.forEach(opt=>{
+            const optLabel = (opt.label||'').toLowerCase(); const optCanon = canonicalize(optLabel); const optAcr = acronymize(optLabel);
+            if(tokenOverlapScore(pcCanon, optCanon) > 0) chosen.push(opt);
+            else if(pcAcr && optAcr && pcAcr === optAcr) chosen.push(opt);
+          });
+        });
       }
     }
     if(chosen.length>0){ matchedLabels.push(label); candidates.push({type:'checkbox', root, label, key: matchedField, chosenLabels: chosen.map(c=>c.label), options, score: 50}); }
@@ -1035,6 +1048,70 @@ function tokenOverlapScore(a, b){
   return overlap;
 }
 
+// Normalize strings for robust matching (remove punctuation, unify common variants)
+function canonicalize(str){
+  if(!str) return '';
+  let s = String(str).toLowerCase().trim();
+  // replace ampersand with and
+  s = s.replace(/&/g,' and ');
+  // remove dots and commas and slashes
+  s = s.replace(/[\.,\/]/g,' ');
+  // normalize multiple spaces
+  s = s.replace(/\s+/g,' ').trim();
+  // common degree variants
+  s = s.replace(/b\s*tech|btech|b\.tech/gi,'btech');
+  s = s.replace(/m\s*tech|mtech|m\.tech/gi,'mtech');
+  s = s.replace(/cse\s*\(ai and ml\)|cse\s*\(ai&ml\)|cse\s*\(ai&ml\)/gi,'cse ai ml');
+  s = s.replace(/cse-ai-ml/gi,'cse ai ml');
+  s = s.replace(/csm/gi,'cse ai ml');
+  // remove punctuation left
+  s = s.replace(/[^a-z0-9\s]/g,'');
+  s = s.replace(/\s+/g,' ').trim();
+  return s;
+}
+
+// Produce an acronym from a phrase, e.g., 'Jawaharlal Nehru Technological University' => 'jntu'
+function acronymize(str){
+  if(!str) return '';
+  try{
+    const words = String(str).replace(/[^a-zA-Z0-9\s]/g,' ').split(/\s+/).filter(Boolean);
+    if(words.length === 0) return '';
+    // if the string already looks like an acronym (all caps, short), return lowercased
+    if(/^[A-Z0-9]{2,6}$/.test(str.trim())) return str.trim().toLowerCase();
+    // take first letters of words longer than 1 char, but include single-letter words too
+    const letters = words.map(w => w[0]).join('');
+    return letters.toLowerCase();
+  }catch(e){ return ''; }
+}
+
+// --- New helpers to avoid auto-filling generic Yes/No groups ---
+function isGenericYesNoOptions(optionLabels){
+  if(!optionLabels || !optionLabels.length) return false;
+  const yesNo = new Set(['yes','no','y','n','true','false','agree','disagree']);
+  // all options should be one-word tokens matching yes/no-like words
+  return optionLabels.every(l => {
+    if(!l) return false;
+    const tok = String(l).trim().toLowerCase();
+    // some labels include punctuation — strip non-word
+    const clean = tok.replace(/[^a-z0-9]/g,'');
+    return yesNo.has(clean);
+  });
+}
+
+const BOOLEAN_LABEL_KEYWORDS = [
+  'relocat','relocation','work from office','work from home','work from','office','attend','attendance',
+  'interview','face to face','face-to-face','available','availability','ready','willing','able','onsite','remote',
+  'agree','consent','accept'
+];
+
+function labelLooksBoolean(labelText){
+  if(!labelText) return false;
+  const s = labelText.toLowerCase();
+  return BOOLEAN_LABEL_KEYWORDS.some(k => s.includes(k));
+}
+
+// ---------------------------------------------------------------
+
 // Build a prioritized list of profile fields to try matching against option labels
 function getProfileMatchCandidates(profile){
   if(!profile || typeof profile !== 'object') return [];
@@ -1051,8 +1128,8 @@ function getProfileMatchCandidates(profile){
   // include fullname/email/phone as low-priority (avoid accidental matches)
   if(profile.fullName) keys.push({key:'fullName', val: String(profile.fullName)});
   if(profile.email) keys.push({key:'email', val: String(profile.email)});
-  // normalize values
-  return keys.map(k=>({ key: k.key, val: (k.val||'').toLowerCase().trim() })).filter(k=>k.val && k.val.length>0);
+  // normalize values (also keep canonical forms)
+  return keys.map(k=>({ key: k.key, val: (k.val||'').toLowerCase().trim(), canon: canonicalize(k.val||''), acr: acronymize(k.val||'') })).filter(k=>k.val && k.val.length>0);
 }
 
 // simple helper to safely escape strings for RegExp construction
@@ -1375,26 +1452,32 @@ function findQuestionTextForElement(el){
 }
 
 function simpleMatch(label, profile){
-  const q = label.toLowerCase();
+  if(!label || !profile) return null;
+  const s = canonicalize(String(label));
   // avoid false positives: if the label mentions course/cert/platform, prefer not to return fullName
-  if(q.includes('name')){
+  if(s.includes('name')){
     const courseKeywords = ['course','certif','certificate','cert','platform','institute','company','organization','organisation'];
-    const containsCourse = courseKeywords.some(k=> q.includes(k));
-    if(!containsCourse) return profile.fullName || '';
+    const containsCourse = courseKeywords.some(k=> s.includes(k));
+    if(!containsCourse) return profile.fullName || null;
   }
-  if(q.includes('email')) return profile.email || '';
-  if(q.includes('phone') || q.includes('mobile') || q.includes('contact')) return profile.phone || '';
-  if(q.includes('roll') || q.includes('enrol') || q.includes('registration')) return profile.rollNo || '';
-  if(q.includes('cgpa') || q.includes('gpa') || q.includes('grade')) return profile.cgpa || '';
-  if(q.includes('10th') || q.includes('tenth') || q.includes('ssc')) return profile.tenthPercent || '';
-  if(q.includes('12th') || q.includes('twelfth') || q.includes('hsc')) return profile.twelfthPercent || '';
-  if(q.includes('resume') || q.includes('cv')) return profile.resumeLink || '';
-  if(q.includes('college') || q.includes('institution') || q.includes('university') || q.includes('institute') || q.includes('college name') || q.includes('name of college') || q.includes('name of institution')) return profile.college || '';
-  if(q.includes('branch') || q.includes('stream') || q.includes('department')) return profile.branch || '';
+  if(s.includes('email')) return profile.email || null;
+  if(s.includes('phone') || s.includes('mobile') || s.includes('contact')) return profile.phone || null;
+  if(s.includes('roll') || s.includes('enrol') || s.includes('registration')) return profile.rollNo || null;
+  if(s.includes('cgpa') || s.includes('gpa') || s.includes('grade')) return profile.cgpa || null;
+  if(s.includes('10th') || s.includes('tenth') || s.includes('ssc')) return profile.tenthPercent || null;
+  if(s.includes('12th') || s.includes('twelfth') || s.includes('hsc')) return profile.twelfthPercent || null;
+  if(s.includes('resume') || s.includes('cv')) return profile.resumeLink || null;
+  if((s.includes('college') || s.includes('institution') || s.includes('university') || s.includes('institute') || s.includes('college name') || s.includes('name of college') || s.includes('name of institution')) && profile.college) return profile.college;
+  if(s.includes('branch') || s.includes('stream') || s.includes('department')) return profile.branch || null;
   // graduation / passing year / passing out / yop
-  if(q.includes('graduat') || q.includes('passing') || q.includes('pass out') || q.includes('yop') || q.includes('year of') || q.match(/\b20\d{2}\b/)){
-    return profile.graduationYear || profile.graduationYOP || profile.gradYear || profile.graduation || '';
+  if(s.includes('graduat') || s.includes('passing') || s.includes('pass out') || s.includes('yop') || s.includes('year') || /\b20\d{2}\b/.test(s)){
+    return profile.graduationYear || profile.graduationYOP || profile.gradYear || profile.graduation || null;
   }
+  // backlog numeric detection
+  if(/backlog|arrear|active backlog|no of backlogs|number of backlogs/.test(s) && typeof profile.backlogCount !== 'undefined') return profile.backlogCount;
+  // DOB / nationality
+  if(s.includes('dob') || s.includes('date of birth')) return profile.dob || null;
+  if(s.includes('nationality')) return profile.nationality || null;
   return null;
 }
 
