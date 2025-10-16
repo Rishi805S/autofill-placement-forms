@@ -389,12 +389,44 @@ document.addEventListener('DOMContentLoaded', () => {
     showFormView();
   });
 
-  // Back button
-  $('backButton').addEventListener('click', () => {
-    showMainView();
+  // Autofill button
+  $('autofillBtn').addEventListener('click', () => {
+    if (!currentProfile) {
+      setStatus('Please select a profile first', true);
+      return;
+    }
+
+    getProfiles((map) => {
+      const profile = map[currentProfile];
+      if (!profile) {
+        setStatus('Selected profile not found', true);
+        return;
+      }
+
+      // Trigger the content script to autofill the form
+      chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
+        if (!tabs[0]) {
+          setStatus('No active tab found', true);
+          return;
+        }
+        
+        chrome.tabs.sendMessage(tabs[0].id, {
+          action: "autofill",
+          profile: profile
+        }, response => {
+          if (chrome.runtime.lastError) {
+            setStatus('Error: Make sure you are on a placement form page', true);
+          } else if (response && response.success) {
+            setStatus('Form filled successfully!');
+          } else {
+            setStatus('Failed to fill form', true);
+          }
+        });
+      });
+    });
   });
 
-  // Profile card clicks (for menu)
+  // Profile card clicks
   $('profileList').addEventListener('click', (e) => {
     const card = e.target.closest('.profile-card');
     if (!card) return;
