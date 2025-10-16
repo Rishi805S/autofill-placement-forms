@@ -1,11 +1,22 @@
 // content.js - injected into Google Forms pages
+// What it does:
+// Injects the matcher into the page
+// When it's called:
+// When the page is loaded
+// Expected input and output:
+// Input: None
+// Output: The matcher is injected into the page
+// Why is this needed:
+// To inject the matcher into the page
 
 // UI Components and Utilities
 // =========================
 
 /**
  * Common styles used across UI components
- */
+*/
+
+// Common styles used across UI components
 const CommonStyles = {
   overlayBase: {
     position: 'fixed',
@@ -52,6 +63,36 @@ function applyStyles(el, styles) {
 }
 
 importMatcherIfNeeded().catch(()=>{});
+
+// Helper: Check if a question is asking about future job-specific commitments (not profile facts)
+function isConditionalJobQuestion(questionLabel) {
+  if (!questionLabel || typeof questionLabel !== 'string') return false;
+  const label = questionLabel.toLowerCase();
+  
+  // Comprehensive patterns for conditional/commitment questions
+  const patterns = [
+    /are you (ready|willing|able|prepared)/i,
+    /will you be (ready|willing|able|available)/i,
+    /can you (attend|work|join|relocate)/i,
+    /if you (clear|get|pass|succeed|are selected)/i,
+    /(this|the) (job|position|role|company) requires/i,
+    /ready to (attend|work|join|relocate)/i,
+    /willing to (attend|work|join|relocate)/i,
+    /able to (attend|work|join|relocate)/i,
+    /prepared to (attend|work|join|relocate)/i,
+    /do you agree to/i,
+    /will you (attend|work|join)/i
+  ];
+  
+  const isConditional = patterns.some(pattern => pattern.test(label));
+  
+  // Optional debug logging (uncomment to troubleshoot)
+  if (isConditional) {
+    console.log('[AutoFill] Skipping conditional question:', questionLabel);
+  }
+  
+  return isConditional;
+}
 
 // helper to produce a stable-ish selector for an element (id preferred)
 function elementToSelector(el){
@@ -532,6 +573,12 @@ function computeCandidatesForProfile(profile){
     const qTitle = root.querySelector('.freebirdFormviewerComponentsQuestionBaseTitle') || root.querySelector('.freebirdFormviewerComponentsQuestionBaseHeader') || root.querySelector('.q-title');
     let label = (qTitle && (qTitle.innerText || qTitle.textContent)) || root.innerText || '(no label)';
     try{ const resolved = resolveAriaLabelIds(label); if(resolved) label = resolved; }catch(e){}
+    
+    // EARLY EXIT: Skip conditional/job-specific questions that ask about future commitments
+    if(isConditionalJobQuestion(label)) {
+      return; // Skip these questions entirely
+    }
+    
     scannedLabels.push(label);
   let matchedField = null;
     if(window.AutofillMatcher && typeof window.AutofillMatcher.matchQuestionToField === 'function'){
@@ -542,6 +589,7 @@ function computeCandidatesForProfile(profile){
   // choose option best matching profile values (gender, relocate, graduationYear, or matchedField)
   let chosen = null;
   let bestScore = 0;
+  const qLower = (label || '').toLowerCase();
     try{
       // collect candidate profile values to consider (in order)
       const candidatesToCheck = [];
@@ -559,16 +607,21 @@ function computeCandidatesForProfile(profile){
       // only consider gender if question explicitly looks like a gender question or matchedField is gender
       try{
         const genderHint = /\b(gender|sex)\b/;
-        if((matchedField === 'gender' || genderHint.test(qLower)) && profile.gender) candidatesToCheck.push({key: 'gender', val: String(profile.gender)});
+        if((matchedField === 'gender' || genderHint.test(qLower)) && profile.gender) {
+          candidatesToCheck.push({key: 'gender', val: String(profile.gender)});
+        }
       }catch(e){}
       // only consider relocate if question mentions relocation/onsite/work-from keywords or matchedField is relocate
+      // This should rarely run since we filter conditional questions earlier
       try{
         const relocationHint = /(relocat|work from office|work from home|on-?site|onsite|wfh|wfo|hybrid)/i;
-        if((matchedField === 'relocate' || relocationHint.test(label)) && profile.relocate) candidatesToCheck.push({key: 'relocate', val: String(profile.relocate)});
+        // Only match if it's a general preference question
+        if((matchedField === 'relocate' || relocationHint.test(qLower)) && profile.relocate) {
+          candidatesToCheck.push({key: 'relocate', val: String(profile.relocate)});
+        }
       }catch(e){}
       if(profile.graduationYear) candidatesToCheck.push({key: 'graduationYear', val: String(profile.graduationYear)});
 
-  const qLower = (label || '').toLowerCase();
   // helper: normalized option label
   function normOpt(o){ return String((o.label||'')).toLowerCase().trim(); }
       // helper to normalize option labels and deprioritize generic "Other" options
@@ -650,7 +703,9 @@ function computeCandidatesForProfile(profile){
   }
 
   // require a minimum confidence to avoid accidental yes/no matches
-  const RADIO_MIN_SCORE = 80;
+  // Higher threshold for Yes/No questions to prevent false positives
+  const isYesNoQuestion = options.length === 2 && options.every(o => /^(yes|no|y|n)$/i.test(normOpt(o)));
+  const RADIO_MIN_SCORE = isYesNoQuestion ? 150 : 80;
   // if we found a decent match, set matchedField if not present
   if(chosen && bestScore >= RADIO_MIN_SCORE){
         if(!matchedField){
@@ -737,6 +792,12 @@ function computeRelaxedCandidatesForProfile(profile){
     seen.add(root);
     const labelText = getLabelTextFromRoot(root);
     const label = (labelText || '').toLowerCase();
+    
+    // Skip conditional/job-specific questions in relaxed matching too
+    if(isConditionalJobQuestion(labelText || label)) {
+      return; // Skip these questions
+    }
+    
     let key = null;
     if(label.includes('name')) key = 'fullName';
     else if(label.includes('email')) key = 'email';
