@@ -1240,7 +1240,28 @@ function showPreviewOverlay(candidates, profile){
     row.style.margin = '0 -8px 8px -8px';
   }
     const info = document.createElement('div');
-    const title = document.createElement('div'); title.style.fontWeight = '600'; title.textContent = c.label;
+    const title = document.createElement('div'); title.style.fontWeight = '600';
+    // If label is missing or generic, try to derive a better label from the candidate's root or element
+    let displayLabel = (c.label || '').toString().trim();
+    if(!displayLabel || displayLabel === '(no label)'){
+      try{
+        if(c.root) displayLabel = getLabelTextFromRoot(c.root) || displayLabel;
+        if((!displayLabel || displayLabel === '(no label)') && c.el) {
+          const root = c.el.closest && (c.el.closest('.freebirdFormviewerComponentsQuestionBaseRoot') || c.el.closest('.question') || c.el.closest('div[role="listitem"]'));
+          if(root) displayLabel = getLabelTextFromRoot(root) || displayLabel;
+        }
+      }catch(e){}
+    }
+    // Last resort: summarize options to give context
+    if(!displayLabel || displayLabel === '(no label)'){
+      if(c.options && c.options.length>0){
+        const optSample = c.options.slice(0,4).map(o=>o.label).filter(Boolean).join(', ');
+        displayLabel = `Question — options: ${optSample}`;
+      } else {
+        displayLabel = '(question label not found)';
+      }
+    }
+    title.textContent = displayLabel;
     const subtitle = document.createElement('div'); subtitle.style.color = '#444';
     const meta = document.createElement('div');
     meta.style.fontSize='11px';
