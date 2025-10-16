@@ -17,7 +17,7 @@
 */
 
 // Common styles used across UI components
-// What are these 
+
 const CommonStyles = {
   overlayBase: {
     position: 'fixed',
@@ -489,26 +489,17 @@ function computeCandidatesForProfile(profile){
     let chosen = null; let bestScore = 0; let chosenIdx = -1;
     if(matchedField && profile[matchedField]){
       const pvRaw = String(profile[matchedField]);
-      const pvCanon = canonicalize(pvRaw);
-      const pvAcr = acronymize(pvRaw);
-      // try exact canonical match
-      chosenIdx = optionCanons.findIndex(c=>c === pvCanon);
-      if(chosenIdx === -1){
-        // fallback to token overlap on canonical forms
-        optionCanons.forEach((c, i)=>{
-          let s = tokenOverlapScore(pvCanon, c);
-          // acronym match boost
-          const optAcr = acronymize(optionLabels[i] || '');
-          if(pvAcr && optAcr && pvAcr === optAcr) s += 5;
-          if(s > bestScore){ bestScore = s; chosenIdx = i; }
-        });
-      }
+      // try to find best option using matchScore (canonical + acronym + normalized overlap)
+      optionCanons.forEach((c, i)=>{
+        const s = matchScore(pvRaw, c, optionLabels[i]);
+        if(s > bestScore){ bestScore = s; chosenIdx = i; }
+      });
     }
 
     // If still no chosen option, try matching against prioritized profile fields
     if(chosenIdx === -1){
-      const pCandidates = getProfileMatchCandidates(profile).map(pc=>({key:pc.key, val: canonicalize(pc.val)}));
-  pCandidates.forEach(pc=>{ const pcCanon = canonicalize(pc.val); const pcAcr = acronymize(pc.val); optionCanons.forEach((c,i)=>{ let s = tokenOverlapScore(pcCanon, c); const optAcr = acronymize(optionLabels[i] || ''); if(pcAcr && optAcr && pcAcr === optAcr) s += 5; if(s > bestScore){ bestScore = s; chosenIdx = i; } }); });
+      const pCandidates = getProfileMatchCandidates(profile);
+      pCandidates.forEach(pc=>{ optionCanons.forEach((c,i)=>{ const s = matchScore(pc.val, c, optionLabels[i]); if(s > bestScore){ bestScore = s; chosenIdx = i; } }); });
     }
 
     if(chosenIdx !== -1 && options[chosenIdx]){
@@ -628,47 +619,20 @@ function computeCandidatesForProfile(profile){
 
         for(const c of candidatesToCheck){
           const pvRaw = (c.val||'');
-          const pv = String(pvRaw).toLowerCase().trim();
-          if(!pv) continue;
-          // exact full match (label or value)
-          if(norm === pv || optValue === pv) { localBest = Math.max(localBest, 300); localKey = c.key; }
-
-          // graduation year matching: handle 4-digit and 2-digit ('26) forms
+          if(!pvRaw) continue;
+          // use matchScore to compute a robust comparison score
+          const s = matchScore(pvRaw, optCanon, rawLabel);
+          // graduation year special-case: if candidate is graduationYear and shows a 4-digit match, boost
           if(c.key === 'graduationYear'){
-            const ty = pv.replace(/[^0-9]/g,'');
-            const ty2 = ty.slice(-2);
-            if(ty && (norm.includes(ty) || optValue.includes(ty) || norm.includes("'"+ty2) || norm.includes(ty2))) { localBest = Math.max(localBest, 220); localKey = 'graduationYear'; }
-            // boost if option shows a 20xx year and question looks like graduation
-            if(/\b20\d{2}\b/.test(norm) && isQuestionGraduation) localBest = Math.max(localBest, 200);
-          }
-
-          // gender matching: conservative checks so substrings like "male" don't match "female"
-          if(c.key === 'gender'){
-            const g = (pv||'').toLowerCase().replace(/[^a-z]/g,'');
-            if(g){
-              try{
-                // whole-word boundary match first (strongest)
-                const re = new RegExp('\\b'+escapeRegExp(g)+'\\b','i');
-                if(re.test(norm)) { localBest = Math.max(localBest, 300); localKey = 'gender'; }
-              }catch(e){}
-              // single-letter matching like 'm' or 'f' when option is a single char
-              if(/^(m|f|o|n)$/i.test(norm) && g && norm[0] && norm[0].toLowerCase() === g[0].toLowerCase()){
-                localBest = Math.max(localBest, 200); localKey = 'gender';
-              }
-              // token overlap (lower weight)
-              if(tokenOverlapScore(pv, norm) > 0) { localBest = Math.max(localBest, 120); if(!localKey) localKey = 'gender'; }
+            const ty = String(pvRaw).replace(/[^0-9]/g,'');
+            if(ty && (/\b20\d{2}\b/.test(norm) || norm.includes(ty))){
+              // strong boost for exact year presence
+              const boost = 400;
+              if(s + boost > localBest){ localBest = s + boost; localKey = 'graduationYear'; }
+              continue;
             }
           }
-
-          // exact canonical match
-          const pvCanon = canonicalize(pv);
-          if(pvCanon && optCanon && (pvCanon === optCanon || optCanon.includes(pvCanon) || pvCanon.includes(optCanon))){ localBest = Math.max(localBest, 300); localKey = c.key; }
-          // acronym match (e.g., jntu vs jawaharlal nehru technological university)
-          const pvAcr = acronymize(pv);
-          if(pvAcr && optAcr && pvAcr === optAcr){ localBest = Math.max(localBest, 280); localKey = c.key; }
-          // general token overlap (on canonical forms)
-          const overlap = tokenOverlapScore(pvCanon, optCanon || norm);
-          if(overlap>0) { localBest = Math.max(localBest, overlap * 12); if(!localKey) localKey = c.key; }
+          if(s > localBest){ localBest = s; localKey = c.key; }
         }
 
   // penalize matching for 'other' options to avoid accidental selection
@@ -758,8 +722,8 @@ function computeCandidatesForProfile(profile){
           const pcCanon = canonicalize(pc.val); const pcAcr = acronymize(pc.val);
           options.forEach(opt=>{
             const optLabel = (opt.label||'').toLowerCase(); const optCanon = canonicalize(optLabel); const optAcr = acronymize(optLabel);
-            if(tokenOverlapScore(pcCanon, optCanon) > 0) chosen.push(opt);
-            else if(pcAcr && optAcr && pcAcr === optAcr) chosen.push(opt);
+            const s = matchScore(pc.val, optCanon, optLabel);
+            if(s > 0) chosen.push(opt);
           });
         });
       }
@@ -1046,6 +1010,33 @@ function tokenOverlapScore(a, b){
   if(at.length===0 || bt.length===0) return 0;
   const overlap = at.filter(t=>bt.includes(t)).length;
   return overlap;
+}
+
+// Produces a matching score between a profile value and an option canonical form
+// Higher is better. Exact canonical match -> very high. Acronym match -> high.
+// Partial token overlap is normalized by option token count to prefer tighter matches
+function matchScore(pvRaw, optCanon, optLabel){
+  if(!pvRaw || !optCanon) return 0;
+  const pvCanon = canonicalize(pvRaw);
+  const pvAcr = acronymize(pvRaw);
+  const optAcr = acronymize(optLabel || optCanon);
+  // exact canonical match
+  if(pvCanon === optCanon) return 10000;
+  // acronym match
+  if(pvAcr && optAcr && pvAcr === optAcr) return 9000;
+  // token overlap
+  const overlap = tokenOverlapScore(pvCanon, optCanon);
+  if(overlap <= 0) return 0;
+  const optTokens = (optCanon.split(/\s+/).filter(Boolean).length) || 1;
+  const pvTokens = (pvCanon.split(/\s+/).filter(Boolean).length) || 1;
+  // normalized proportion of option tokens that match
+  const prop = overlap / optTokens;
+  // base score influenced by overlap and proportion, penalize extra tokens in option
+  let score = overlap * 100 + Math.round(prop * 500) - Math.max(0, (optTokens - overlap)) * 40;
+  // small boost if profile contains all option tokens (reverse proportion)
+  const reverseProp = overlap / pvTokens;
+  score += Math.round(reverseProp * 50);
+  return Math.max(0, Math.round(score));
 }
 
 // Normalize strings for robust matching (remove punctuation, unify common variants)
