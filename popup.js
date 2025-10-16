@@ -389,41 +389,9 @@ document.addEventListener('DOMContentLoaded', () => {
     showFormView();
   });
 
-  // Autofill button
-  $('autofillBtn').addEventListener('click', () => {
-    if (!currentProfile) {
-      setStatus('Please select a profile first', true);
-      return;
-    }
-
-    getProfiles((map) => {
-      const profile = map[currentProfile];
-      if (!profile) {
-        setStatus('Selected profile not found', true);
-        return;
-      }
-
-      // Trigger the content script to autofill the form
-      chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
-        if (!tabs[0]) {
-          setStatus('No active tab found', true);
-          return;
-        }
-        
-        chrome.tabs.sendMessage(tabs[0].id, {
-          action: "autofill",
-          profile: profile
-        }, response => {
-          if (chrome.runtime.lastError) {
-            setStatus('Error: Make sure you are on a placement form page', true);
-          } else if (response && response.success) {
-            setStatus('Form filled successfully!');
-          } else {
-            setStatus('Failed to fill form', true);
-          }
-        });
-      });
-    });
+  // Back button
+  $('backButton').addEventListener('click', () => {
+    showMainView();
   });
 
   // Profile card clicks
@@ -719,35 +687,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Load injection toggle state
-  // What it does:
-  // Loads the injection toggle state
-  // When it's called:
-  // When the popup is opened
-  // Expected input and output:
-  // Input: None
-  // Output: The injection toggle state is loaded
-  // Why is this needed:
-  // To load the injection toggle state
-  chrome.storage.local.get(['injectionEnabled'], (res) => {
-    const enabled = res.injectionEnabled ?? true;
-    $('injectionToggle').checked = enabled;
-  });
-
-  // Injection toggle
-  // What it does:
-  // Handles injection toggle change
-  // When it's called:
-  // When the user changes the injection toggle
-  // Expected input and output:
-  // Input: None
-  // Output: The injection toggle state is changed
-  // Why is this needed:
-  // To handle injection toggle change
-  $('injectionToggle').addEventListener('change', (e) => {
-    const enabled = e.target.checked;
-    chrome.storage.local.set({ injectionEnabled: enabled }, () => {
-      setStatus(`Autofill ${enabled ? 'enabled' : 'disabled'}`);
+  // Load injection toggle state (if element exists)
+  const injectionToggle = $('injectionToggle');
+  if (injectionToggle) {
+    chrome.storage.local.get(['injectionEnabled'], (res) => {
+      const enabled = res.injectionEnabled ?? true;
+      injectionToggle.checked = enabled;
     });
-  });
+
+    // Injection toggle
+    injectionToggle.addEventListener('change', (e) => {
+      const enabled = e.target.checked;
+      chrome.storage.local.set({ injectionEnabled: enabled }, () => {
+        setStatus(`Autofill ${enabled ? 'enabled' : 'disabled'}`);
+      });
+    });
+  }
 });
