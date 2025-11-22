@@ -7,9 +7,8 @@ This comprehensive guide outlines the steps required to package and publish the 
 ### 1. Assets & Resources
 
 #### Icons
-- [x] **48x48 PNG icon** — Located at `icons/icon48_prod.png`
-- [x] **128x128 PNG icon** — Located at `icons/icon128_prod.png`
-- [x] Icons referenced correctly in `manifest.json`
+- [ ] Production PNG icons removed from repo; SVG sources are available at `icons/icon48.svg` and `icons/icon128.svg`.
+- [ ] For Chrome Web Store, provide production PNGs (48x48, 128x128) and update `manifest.json` to reference them before packaging.
 
 #### Screenshots
 - [ ] **Popup interface** (1280x800 or 1920x1080 recommended)

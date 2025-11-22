@@ -24,141 +24,41 @@ The project includes several test files:
 
 Running a local server ensures content scripts inject properly:
 
-```powershell
-# Navigate to project directory
-cd 'C:\Users\Rishi\Documents\AutoFill Placement Forms'
+# Testing (concise)
 
-# Start Python HTTP server
-py -3 -m http.server 8000
-# OR
-python -m http.server 8000
-```
+This file describes the core manual and automated checks for the extension.
 
-The server will be available at `http://localhost:8000`
+Manual checks
+- Load the extension at `chrome://extensions` → Developer mode → Load unpacked
+- Create or import a profile via the popup
+- Open a sample or a real Google Form and run Preview → Apply
 
-## Manual Testing Workflow
-
-### Test 1: Basic Profile Creation
-
-1. Click the extension icon in Chrome toolbar
-2. Click "+ New Profile" button
-3. Fill in profile details:
-   - Profile name: "Test Profile"
-   - Full name: "John Doe"
-   - Email: "john@example.com"
-   - Phone: "+1234567890"
-   - Other fields as needed
-4. Click "Save Profile"
-5. **Expected**: Profile appears in the list, status shows "Saved profile"
-
-### Test 2: Basic Form Autofill
-
-1. Open `http://localhost:8000/sample_form_basic.html`
-2. **Expected**: Floating autofill button appears (bottom-right or adjusted position)
-3. Select a profile from the dropdown (if visible)
-4. Click the "Autofill" button
-5. **Expected**: Preview overlay appears showing detected fields
-6. Review the matches and values
-7. Click "Apply selected" or "Apply"
-8. **Expected**: Form fields are filled with profile data
-
-### Test 3: Advanced Form Fields
-
-1. Open `http://localhost:8000/sample_form_advanced.html`
-2. Use the autofill functionality
-3. **Verify**:
-   - Text inputs are filled
-   - Dropdowns are selected correctly
-   - Radio buttons are selected
-   - Checkboxes are checked if applicable
-   - CGPA, percentages filled correctly
-
-### Test 4: Profile Import/Export
-
-1. Open the extension popup
-2. Click on a profile's menu (⋮ or similar)
-3. Select "Export" or click export button
-4. **Expected**: JSON file downloads
-5. Click "Import" button
-6. Select the downloaded JSON file
-7. **Expected**: Profile is imported successfully
-
-### Test 5: Multiple Profiles
-
-1. Create 3 different profiles with different data
-2. Switch between forms
-3. Test autofilling with each profile
-4. **Verify**: Correct data is filled for each profile
-
-## Automated Testing
-
-### Unit Tests (Jest)
-
-Run matcher algorithm tests:
+Automated checks
+- Unit tests (matcher):
 
 ```powershell
-# Install dependencies (first time only)
 npm install
-
-# Run tests
 npm test
-
-# Run tests in watch mode
-npm test -- --watch
 ```
 
-**Expected output**: All tests pass with match scores displayed
+Local samples
+- Serve the repo root and open `sample_form_basic.html` and `sample_form_advanced.html` for quick verification:
 
-### Browser-Based Matcher Tests
+```powershell
+py -3 -m http.server 8000
+# visit http://localhost:8000/sample_form_basic.html
+```
 
-1. Open `http://localhost:8000/matcher_test.html`
-2. Tests run automatically
-3. **Review**:
-   - Pass/fail counts
-   - Individual test scores
-   - Match confidence levels
+Debugging
+- Inspect popup: right-click extension icon → Inspect popup
+- Inspect content script: Inspect page → Console (filter for `content.js` logs)
+- View stored profiles:
 
-## Testing Checklist
+```javascript
+chrome.storage.local.get('profilesV1', console.log)
+```
 
-### Functionality Tests
-
-- [ ] Profile creation
-- [ ] Profile editing
-- [ ] Profile deletion
-- [ ] Profile import
-- [ ] Profile export
-- [ ] Dark/light theme toggle
-- [ ] Form field detection
-- [ ] Field value filling
-- [ ] Preview overlay display
-- [ ] Apply autofill action
-- [ ] Injection toggle (enable/disable)
-
-### Field Type Tests
-
-- [ ] Text inputs (single-line)
-- [ ] Textarea (multi-line)
-- [ ] Email inputs
-- [ ] Number inputs
-- [ ] Dropdown/select elements
-- [ ] Radio buttons
-- [ ] Checkboxes
-- [ ] URL/link inputs
-
-### Edge Cases
-
-- [ ] Empty profile fields
-- [ ] Special characters in data
-- [ ] Very long text values
-- [ ] Forms with no matching fields
-- [ ] Forms with many matching fields
-- [ ] Partial form matches
-- [ ] Multiple forms on same page
-
-### Browser Compatibility
-
-- [ ] Chrome (latest)
-- [ ] Chrome (one version back)
+If you need the previous full checklist, it is archived in the project history; ask and I will restore specific sections.
 - [ ] Edge (Chromium-based)
 
 ### Performance Tests

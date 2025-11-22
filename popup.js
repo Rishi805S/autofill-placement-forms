@@ -104,7 +104,7 @@ function selectProfile(name) {
 // cgpa: The value of the "CGPA" input field
 // tenthPercent: The value of the "10th Percentage" input field
 // twelfthPercent: The value of the "12th Percentage" input field
-// graduationYear: The value of the "Graduation Year" input field
+// Note: Graduation Year field removed from the form and profile data
 // college: The value of the "College" input field
 // branch: The value of the "Branch" input field
 // gender: The value of the "Gender" input field
@@ -135,7 +135,7 @@ function buildProfileFromForm() {
     cgpa: $('cgpa').value || '',
     tenthPercent: $('tenthPercent').value || '',
     twelfthPercent: $('twelfthPercent').value || '',
-    graduationYear: $('graduationYear').value || '',
+  graduationYear: $('graduationYear').value || '',
     college: $('college').value || '',
     branch: $('branch').value || '',
     gender: $('gender').value || '',
@@ -174,7 +174,7 @@ function loadProfileIntoForm(profile, name) {
   $('cgpa').value = profile.cgpa || '';
   $('tenthPercent').value = profile.tenthPercent || '';
   $('twelfthPercent').value = profile.twelfthPercent || '';
-  $('graduationYear').value = profile.graduationYear || '';
+  try { $('graduationYear').value = profile.graduationYear || ''; } catch (e) { }
   $('college').value = profile.college || '';
   $('branch').value = profile.branch || '';
   $('gender').value = profile.gender || '';

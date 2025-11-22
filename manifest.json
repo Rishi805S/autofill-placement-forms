@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "description": "Autofill placement forms (Google Forms) from a saved profile.",
   "icons": {
-    "48": "icons/icon48_prod.png",
-    "128": "icons/icon128_prod.png"
+    "48": "icons/icon48.svg",
+    "128": "icons/icon128.svg"
   },
   "permissions": ["storage", "activeTab", "scripting"],
   "host_permissions": [
@@ -18,8 +18,7 @@
   ],
   "action": {
     "default_popup": "popup.html",
-  "default_icon": "icons/icon48_prod.png"
-
+    "default_icon": "icons/icon48.svg"
   },
   "content_scripts": [
     {

@@ -65,6 +65,9 @@ function applyStyles(el, styles) {
 
 importMatcherIfNeeded().catch(()=>{});
 
+// Toggle to enable extra debugging output in the preview overlay (false by default)
+const AF_DEBUG = false;
+
 // Helper: Check if a question is asking about future job-specific commitments (not profile facts)
 function isConditionalJobQuestion(questionLabel) {
   if (!questionLabel || typeof questionLabel !== 'string') return false;
@@ -127,7 +130,19 @@ try{
           if(candidates && candidates.length > 0){
             // map candidates to a serializable form (include selectors instead of Element refs)
             const serial = candidates.map(c=>{
-              const out = { type: c.type, label: c.label, key: c.key, score: c.score };
+              // derive a better label when original label is missing or unhelpful
+              let derivedLabel = (c.label || '').toString().trim();
+              try{
+                if(!derivedLabel || derivedLabel === '(no label)'){
+                  // prefer root label text when possible
+                  if(c.root){ const rl = getLabelTextFromRoot(c.root); if(rl) derivedLabel = rl; }
+                  // fallback to element-level question text
+                  if((!derivedLabel || derivedLabel === '(no label)') && c.el){ const elText = findQuestionTextForElement(c.el); if(elText) derivedLabel = elText; }
+                }
+              }catch(e){}
+              if(!derivedLabel) derivedLabel = '(no label)';
+
+              const out = { type: c.type, label: derivedLabel, key: c.key, score: c.score };
               if(c.value) out.value = c.value;
               if(c.chosen) out.chosen = (typeof c.chosen === 'object') ? { label: c.chosen.label, value: c.chosen.value } : c.chosen;
               if(c.chosenLabel) out.chosenLabel = c.chosenLabel;
@@ -137,7 +152,28 @@ try{
               try{ if(c.root) out.rootSelector = elementToSelector(c.root); }catch(e){}
               return out;
             });
+            // Deduplicate candidates by normalized preview label so identical questions are presented once.
+            // Prefer the candidate with the higher score when duplicates exist.
+            const dedupMap = new Map();
+            serial.forEach(s => {
+              const nl = normalizePreviewLabel(s.label || s.key || '');
+              if(!nl){
+                // keep unlabeled items as separate entries (use a unique key)
+                const uid = `${s.label}::${Math.random().toString(36).slice(2,8)}`;
+                dedupMap.set(uid, s);
+                return;
+              }
+              if(!dedupMap.has(nl)) { dedupMap.set(nl, s); }
+              else {
+                const ex = dedupMap.get(nl);
+                // prefer the candidate with higher score
+                if((s.score||0) > (ex.score||0)) dedupMap.set(nl, s);
+              }
+            });
+            const deduped = Array.from(dedupMap.values());
             sendResponse({ success: true, candidates: serial });
+            // NOTE: we still send the original serial for backward compatibility with any UI relying on ordering.
+            // If you prefer deduped output, change the line above to send 'deduped' instead of 'serial'.
             return true;
           }
           sendResponse({ success: false, message: 'No fields matched' });
@@ -441,7 +477,8 @@ function computeCandidatesForProfile(profile){
       }else{
         matchedLabels.push(label);
         if(root) matchedRoots.add(root);
-        candidates.push({type:'text', el: inp, label, key: matched.key, value: matched.value, score: matched.score});
+        const dlab = deriveLabel(label, root, inp) || label;
+        candidates.push({type:'text', el: inp, label: dlab, key: matched.key, value: matched.value, score: matched.score});
       }
     }
   });
@@ -480,39 +517,50 @@ function computeCandidatesForProfile(profile){
       if(idx !== -1){
         const chosen = options[idx];
         matchedLabels.push(label);
-        candidates.push({type:'select', el: sel, label, key: matchedField || 'backlogCount', chosen, options, score: 100});
+        const dl = deriveLabel(label, root, sel) || label;
+        candidates.push({type:'select', el: sel, label: dl, key: matchedField || 'backlogCount', chosen, options, score: 100});
         return; // continue to next select
       }
     }
 
+    // (graduationYear handling removed - field disabled)
+
     // pick best option by scoring canonical token overlap (also consider acronyms)
-    let chosen = null; let bestScore = 0; let chosenIdx = -1;
+    let chosen = null; let bestScore = 0; let chosenIdx = -1; let chosenKey = null;
     if(matchedField && profile[matchedField]){
       const pvRaw = String(profile[matchedField]);
       // try to find best option using matchScore (canonical + acronym + normalized overlap)
       optionCanons.forEach((c, i)=>{
         const s = matchScore(pvRaw, c, optionLabels[i]);
-        if(s > bestScore){ bestScore = s; chosenIdx = i; }
+        if(s > bestScore){ bestScore = s; chosenIdx = i; chosenKey = matchedField; }
       });
     }
+
+    // Simple Graduation Year handling: if profile.graduationYear present and one of the options contains that year, prefer it.
+    try{
+      if(profile && profile.graduationYear){
+        const ty = String(profile.graduationYear).trim();
+        if(ty){
+          const yearIdx = options.findIndex(o => ((String(o.label||'')).indexOf(ty) !== -1) || ((String(o.value||'')).indexOf(ty) !== -1));
+          if(yearIdx !== -1){ chosenIdx = yearIdx; chosenKey = 'graduationYear'; }
+        }
+      }
+    }catch(e){}
 
     // If still no chosen option, try matching against prioritized profile fields
     if(chosenIdx === -1){
       const pCandidates = getProfileMatchCandidates(profile);
-      pCandidates.forEach(pc=>{ optionCanons.forEach((c,i)=>{ const s = matchScore(pc.val, c, optionLabels[i]); if(s > bestScore){ bestScore = s; chosenIdx = i; } }); });
+      pCandidates.forEach(pc=>{ optionCanons.forEach((c,i)=>{ const s = matchScore(pc.val, c, optionLabels[i]); if(s > bestScore){ bestScore = s; chosenIdx = i; chosenKey = pc.key; } }); });
     }
 
     if(chosenIdx !== -1 && options[chosenIdx]){
       chosen = options[chosenIdx];
-      // graduation year: prefer numeric match if applicable
-      const rl = (rootLabel||'').toLowerCase();
-      if((rl.includes('graduat') || rl.includes('passing') || rl.includes('yop') || rl.includes('year')) && profile.graduationYear){
-        const target = String(profile.graduationYear);
-        const exactIdx = options.findIndex(o=> (String(o.label||'').includes(target)) || (String(o.value||'').includes(target)) );
-        if(exactIdx !== -1) { chosen = options[exactIdx]; }
-      }
+      // graduation year handling removed - no special-case numeric match
       matchedLabels.push(label);
-      candidates.push({type:'select', el: sel, label, key: matchedField || 'fallback', chosen, options, score: (chosen?50:0)});
+      // prefer using matchedField (from question-level matcher) else the chosenKey derived from profile-value matching
+      const finalKey = matchedField || chosenKey || 'fallback';
+      const dlab = deriveLabel(label, root, sel) || label;
+      candidates.push({type:'select', el: sel, label: dlab, key: finalKey, chosen, options, score: (chosen?50:0)});
     }
   });
 
@@ -545,6 +593,7 @@ function computeCandidatesForProfile(profile){
       if(res && res.key) matchedField = res.key;
     }
     if(!matchedField){ const val = simpleMatch(label, profile); if(val) matchedField = 'fallback'; }
+    // (graduationYear handling removed - field disabled)
     // Guard: avoid auto-selecting generic Yes/No radio groups unless the question text indicates a boolean
     try{
       const optionLabels = options.map(o=> (o.label||'').toLowerCase().trim());
@@ -558,15 +607,15 @@ function computeCandidatesForProfile(profile){
         }
       }
     }catch(e){}
-  // choose option best matching profile values (gender, relocate, graduationYear, backlogCount, or matchedField)
+  // choose option best matching profile values (gender, relocate, backlogCount, or matchedField)
   let chosen = null;
   let bestScore = 0;
   const qLower = (label || '').toLowerCase();
   // prepare canonical option labels
   const optionCanons = options.map(o=>canonicalize(o.label || ''));
     try{
-      // collect candidate profile values to consider (in order)
-      const candidatesToCheck = [];
+  // collect candidate profile values to consider (in order)
+  const candidatesToCheck = [];
       if(matchedField && profile[matchedField]) candidatesToCheck.push({key: matchedField, val: String(profile[matchedField])});
       // include profile-priority candidates so option labels like CSE match even if the question label is 'Course'
       const pCandidates = getProfileMatchCandidates(profile);
@@ -597,7 +646,8 @@ function computeCandidatesForProfile(profile){
           candidatesToCheck.push({key: 'relocate', val: String(profile.relocate)});
         }
       }catch(e){}
-      if(profile.graduationYear) candidatesToCheck.push({key: 'graduationYear', val: String(profile.graduationYear)});
+      // include graduationYear as a simple candidate so year-labeled options can match directly
+      try{ if(profile && profile.graduationYear) candidatesToCheck.push({key:'graduationYear', val: String(profile.graduationYear)}); }catch(e){}
 
   // helper: normalized option label
   function normOpt(o){ return String((o.label||'')).toLowerCase().trim(); }
@@ -622,16 +672,6 @@ function computeCandidatesForProfile(profile){
           if(!pvRaw) continue;
           // use matchScore to compute a robust comparison score
           const s = matchScore(pvRaw, optCanon, rawLabel);
-          // graduation year special-case: if candidate is graduationYear and shows a 4-digit match, boost
-          if(c.key === 'graduationYear'){
-            const ty = String(pvRaw).replace(/[^0-9]/g,'');
-            if(ty && (/\b20\d{2}\b/.test(norm) || norm.includes(ty))){
-              // strong boost for exact year presence
-              const boost = 400;
-              if(s + boost > localBest){ localBest = s + boost; localKey = 'graduationYear'; }
-              continue;
-            }
-          }
           if(s > localBest){ localBest = s; localKey = c.key; }
         }
 
@@ -665,16 +705,27 @@ function computeCandidatesForProfile(profile){
   const isYesNoQuestion = options.length === 2 && options.every(o => /^(yes|no|y|n)$/i.test(normOpt(o)));
   const RADIO_MIN_SCORE = isYesNoQuestion ? 150 : 80;
   // if we found a decent match, set matchedField if not present
-  if(chosen && bestScore >= RADIO_MIN_SCORE){
+        if(chosen && bestScore >= RADIO_MIN_SCORE){
         if(!matchedField){
           // infer field type from option match
           const chLabel = (chosen.label||'').toLowerCase();
-          if(/male|female|man|woman|m\b|f\b|prefer not/.test(chLabel)) matchedField = 'gender';
-          else if(/\b20\d{2}\b|\b\d{2}\b/.test(chLabel) || /graduat|pass|yop|year|batch|passing out/.test(qLower)) matchedField = 'graduationYear';
-          else matchedField = 'fallback';
+          // Simple Graduation Year detection: if profile.graduationYear exists and the chosen option text contains that year, treat as graduationYear
+          try{
+            if(profile && profile.graduationYear){
+              const ty = String(profile.graduationYear).trim();
+              if(ty && (chLabel.includes(ty) || String(chosen.label||'').toLowerCase().includes(ty))){ matchedField = 'graduationYear'; }
+            }
+          }catch(e){}
+          if(!matchedField){
+            if(/male|female|man|woman|m\b|f\b|prefer not/.test(chLabel)) matchedField = 'gender';
+            else matchedField = 'fallback';
+          }
         }
         matchedLabels.push(label);
-        candidates.push({type:'radio', root, label, key: matchedField, chosenLabel: chosen.label, options, score: bestScore});
+        // If chosenKey was set earlier from profile matching, prefer it as the candidate key so branch/highestQualification are retained
+        const radioKey = matchedField || (typeof chosen === 'object' && chosen.key) || 'fallback';
+        const radioLabel = deriveLabel(label, root, root) || label;
+        candidates.push({type:'radio', root, label: radioLabel, key: radioKey, chosenLabel: chosen.label, options, score: bestScore});
       }
     }catch(e){ /* ignore radio matching error */ }
   });
@@ -728,7 +779,7 @@ function computeCandidatesForProfile(profile){
         });
       }
     }
-    if(chosen.length>0){ matchedLabels.push(label); candidates.push({type:'checkbox', root, label, key: matchedField, chosenLabels: chosen.map(c=>c.label), options, score: 50}); }
+  if(chosen.length>0){ matchedLabels.push(label); const cbKey = matchedField || 'fallback'; const cbLabel = deriveLabel(label, root, root) || label; candidates.push({type:'checkbox', root, label: cbLabel, key: cbKey, chosenLabels: chosen.map(c=>c.label), options, score: 50}); }
   });
 
   // Final heuristic pass: if a question root's title clearly mentions 'college' but we didn't produce a candidate for it,
@@ -748,7 +799,7 @@ function computeCandidatesForProfile(profile){
   if(/college|institution|university|institute|college name/.test(t) && !courseKeywords.test(t) && profile && profile.college){
           // find a suitable input inside root
           const inp = root.querySelector('input[type="text"], textarea, input.whsOnd, [jsname="YPqjbf"]');
-          if(inp){ matchedRoots.add(root); matchedLabels.push(title); candidates.push({type:'text', el: inp, label: title, key: 'college', value: profile.college, score: 65}); }
+      if(inp){ matchedRoots.add(root); matchedLabels.push(title); const dl = deriveLabel(title, root, inp) || title; candidates.push({type:'text', el: inp, label: dl, key: 'college', value: profile.college, score: 65}); }
         }
       }catch(e){}
     });
@@ -793,7 +844,8 @@ function computeRelaxedCandidatesForProfile(profile){
     // text inputs
     const input = root.querySelector('input[type="text"], input[type="email"], input[type="tel"], input[type="url"], textarea');
     if(input && profile[key]){
-      candidates.push({type:'text', el: input, label: labelText || label, key, value: profile[key], score: 30});
+      const dl = deriveLabel(labelText || label, root, input) || (labelText || label);
+      candidates.push({type:'text', el: input, label: dl, key, value: profile[key], score: 30});
       return;
     }
 
@@ -803,7 +855,7 @@ function computeRelaxedCandidatesForProfile(profile){
       const options = Array.from(sel.options).map(o=>({value:o.value, label:o.text}));
       let chosen = options.find(o=> (String(o.value||'').toLowerCase() === String(profile[key]).toLowerCase()) || (String(o.label||'').toLowerCase() === String(profile[key]).toLowerCase()));
       if(!chosen && options.length>0) chosen = options[0];
-      if(chosen) candidates.push({type:'select', el: sel, label: labelText || label, key, chosen, options, score: 30});
+      if(chosen){ const dl = deriveLabel(labelText || label, root, sel) || (labelText || label); candidates.push({type:'select', el: sel, label: dl, key, chosen, options, score: 30}); }
       return;
     }
 
@@ -812,7 +864,7 @@ function computeRelaxedCandidatesForProfile(profile){
     if(radios.length>0 && profile[key]){
       const opts = radios.map(r=>({el:r, label:getOptionLabel(r)}));
       const match = opts.find(o=> (o.label||'').toLowerCase() === String(profile[key]).toLowerCase());
-      if(match) candidates.push({type:'radio', root, label: labelText || label, key, chosenLabel: match.label, options: opts, score: 30});
+      if(match){ const dl = deriveLabel(labelText || label, root, root) || (labelText || label); candidates.push({type:'radio', root, label: dl, key, chosenLabel: match.label, options: opts, score: 30}); }
       return;
     }
 
@@ -823,7 +875,7 @@ function computeRelaxedCandidatesForProfile(profile){
       const chosen = [];
       opts.forEach(o=>{ if(String(profile[key]).toLowerCase().includes((o.label||'').toLowerCase())) chosen.push(o); });
       if(chosen.length===0 && opts.length>0) chosen.push(opts[0]);
-      if(chosen.length>0) candidates.push({type:'checkbox', root, label: labelText || label, key, chosenLabels: chosen.map(c=>c.label), options: opts, score: 30});
+      if(chosen.length>0){ const dl = deriveLabel(labelText || label, root, root) || (labelText || label); candidates.push({type:'checkbox', root, label: dl, key, chosenLabels: chosen.map(c=>c.label), options: opts, score: 30}); }
       return;
     }
   });
@@ -870,6 +922,23 @@ function getLabelTextFromRoot(root){
   const text = (root.innerText || root.textContent || '').trim();
   if(text && text.length>3) return text.split('\n').map(s=>s.trim()).filter(Boolean)[0] || text;
   return '';
+}
+
+// Normalize a label for preview merging (lowercase, remove punctuation, collapse spaces, remove trailing asterisks)
+function normalizePreviewLabel(s){
+  if(!s) return '';
+  try{ return String(s).toLowerCase().replace(/\*/g,'').replace(/[^a-z0-9\s]/g,' ').replace(/\s+/g,' ').trim(); }catch(e){ return String(s).toLowerCase().trim(); }
+}
+
+// Helper to derive a sensible label for a candidate using provided label, root or element
+function deriveLabel(label, root, el){
+  try{
+    let l = (label || '').toString().trim();
+    if(l && l !== '(no label)') return l;
+    if(root){ const rl = getLabelTextFromRoot(root); if(rl) return rl; }
+    if(el){ const eltxt = findQuestionTextForElement(el); if(eltxt) return eltxt; }
+    return '';
+  }catch(e){ return (label||'') }
 }
 
 // Helper to select/click a radio/checkbox option element across native inputs and role-based elements
@@ -1052,9 +1121,17 @@ function canonicalize(str){
   // common degree variants
   s = s.replace(/b\s*tech|btech|b\.tech/gi,'btech');
   s = s.replace(/m\s*tech|mtech|m\.tech/gi,'mtech');
-  s = s.replace(/cse\s*\(ai and ml\)|cse\s*\(ai&ml\)|cse\s*\(ai&ml\)/gi,'cse ai ml');
-  s = s.replace(/cse-ai-ml/gi,'cse ai ml');
-  s = s.replace(/csm/gi,'cse ai ml');
+  // branch aliases and common shorthand
+  s = s.replace(/cse\s*\(ai and ml\)|cse\s*\(ai&ml\)|cse\s*\(ai ml\)/gi,'cse ai ml');
+  s = s.replace(/cse-?ai-?ml/gi,'cse ai ml');
+  s = s.replace(/computer science and engineering|computer science engineering/gi,'cse');
+  s = s.replace(/computer science/gi,'cse');
+  s = s.replace(/civil engineering|civil engg/gi,'civil');
+  s = s.replace(/electrical and electronics engineering|eee/gi,'eee');
+  s = s.replace(/electrical engineering/gi,'ee');
+  s = s.replace(/mechanical engineering|mech/gi,'me');
+  s = s.replace(/information technology|it\b/gi,'it');
+  s = s.replace(/csm\b/gi,'csm');
   // remove punctuation left
   s = s.replace(/[^a-z0-9\s]/g,'');
   s = s.replace(/\s+/g,' ').trim();
@@ -1107,13 +1184,12 @@ function labelLooksBoolean(labelText){
 function getProfileMatchCandidates(profile){
   if(!profile || typeof profile !== 'object') return [];
   const keys = [];
-  // Priority order: branch, college/institute, highest qualification (if present), graduationYear, gender, relocate
+  // Priority order: branch, college/institute, highest qualification (if present), gender, relocate
   if(profile.branch) keys.push({key:'branch', val: String(profile.branch)});
   if(profile.college) keys.push({key:'college', val: String(profile.college)});
   // support alternate field names if present
   if(profile.highestQualification) keys.push({key:'highestQualification', val: String(profile.highestQualification)});
   if(profile.qualification) keys.push({key:'qualification', val: String(profile.qualification)});
-  if(profile.graduationYear) keys.push({key:'graduationYear', val: String(profile.graduationYear)});
   if(profile.gender) keys.push({key:'gender', val: String(profile.gender)});
   if(profile.relocate) keys.push({key:'relocate', val: String(profile.relocate)});
   // include fullname/email/phone as low-priority (avoid accidental matches)
@@ -1226,80 +1302,124 @@ function showPreviewOverlay(candidates, profile){
   selectAllRow.style.marginBottom = '8px';
   selectAllRow.innerHTML = `<label style="font-size:13px"><input type="checkbox" id="af-select-all" checked style="margin-right:8px"> Select all</label>`;
   list.appendChild(selectAllRow);
+  // Group candidates by question root selector (if available) or by label text so multiple
+  // candidates that belong to the same question render as a single preview row with combined options.
+  const groups = new Map();
   candidates.forEach((c, i)=>{
+    // derive a stable key: prefer root element selector, else el selector, else the label string
+    const rootSel = (c.root && elementToSelector(c.root)) || (c.el && elementToSelector(c.el)) || (c.label || '').trim() || `idx-${i}`;
+    if(!groups.has(rootSel)) groups.set(rootSel, { indices: [], merged: null });
+    groups.get(rootSel).indices.push(i);
+    // set merged candidate meta if not present
+    if(!groups.get(rootSel).merged){
+      // shallow copy of candidate as base
+      groups.get(rootSel).merged = Object.assign({}, c);
+      groups.get(rootSel).merged._origIndices = [i];
+    } else {
+      // merge options if present
+      const m = groups.get(rootSel).merged;
+      m._origIndices.push(i);
+      if(c.options && c.options.length>0){
+        m.options = m.options || [];
+        // append new options that are not already present (by label)
+        c.options.forEach(o=>{ if(!m.options.find(x=>x.label===o.label)) m.options.push(o); });
+      }
+      // prefer the candidate with higher score for chosen/label/key
+      if((c.score||0) > (m.score||0)){
+        m.chosen = c.chosen || m.chosen;
+        m.chosenLabel = c.chosenLabel || m.chosenLabel;
+        m.key = c.key || m.key;
+        m.label = m.label || c.label;
+        m.score = c.score;
+      }
+    }
+  });
+
+  const grouped = Array.from(groups.values()).map(g=>g.merged || null).filter(Boolean);
+  // Secondary merge: if multiple groups share the same normalized label, merge them
+  const labelMap = new Map();
+  grouped.forEach(g => {
+    const lab = (g.label || '').toString().trim().toLowerCase();
+    const norm = lab.replace(/\s+/g,' ').trim();
+    if(!norm) return;
+    if(!labelMap.has(norm)) labelMap.set(norm, Object.assign({}, g));
+    else {
+      const existing = labelMap.get(norm);
+      // merge orig indices
+      existing._origIndices = Array.from(new Set([...(existing._origIndices||[]), ...(g._origIndices||[])]));
+      // merge options by label
+      existing.options = existing.options || [];
+      (g.options||[]).forEach(o=>{ if(!existing.options.find(x=>x.label===o.label)) existing.options.push(o); });
+      // prefer higher score
+      if((g.score||0) > (existing.score||0)){
+        existing.chosen = g.chosen || existing.chosen;
+        existing.chosenLabel = g.chosenLabel || existing.chosenLabel;
+        existing.key = g.key || existing.key;
+        existing.label = existing.label || g.label;
+        existing.score = g.score;
+      }
+    }
+  });
+  const finalGroups = Array.from(labelMap.values()).filter(Boolean);
+  // Render grouped candidates (use finalGroups which merged identical labels)
+  const renderGroups = finalGroups.length > 0 ? finalGroups : grouped;
+  renderGroups.forEach((c, groupIdx)=>{
+    const origIndices = c._origIndices || [];
     const row = document.createElement('div');
     row.style.display = 'flex';
     row.style.alignItems = 'flex-start';
     row.style.marginBottom = '8px';
-  // Add warning indicator for low confidence matches
-  const isLowConfidence = (c.score || 0) < 50;
-  row.innerHTML = `<input type="checkbox" data-idx="${i}" checked style="margin-right:8px;margin-top:6px"/>`;
-  if(isLowConfidence) {
-    row.style.backgroundColor = 'rgba(230, 126, 34, 0.1)';
-    row.style.padding = '8px';
-    row.style.margin = '0 -8px 8px -8px';
-  }
+    const isLowConfidence = (c.score || 0) < 50;
+  // Use the first original index as a primary index but record all original indices
+  const primaryIdx = origIndices[0];
+  // data-orig contains comma-separated original candidate indices so Apply can expand grouped rows
+  row.innerHTML = `<input type="checkbox" data-idx="${primaryIdx}" data-orig="${origIndices.join(',')}" checked style="margin-right:8px;margin-top:6px"/>`;
+    if(isLowConfidence){ row.style.backgroundColor = 'rgba(230, 126, 34, 0.1)'; row.style.padding = '8px'; row.style.margin = '0 -8px 8px -8px'; }
     const info = document.createElement('div');
     const title = document.createElement('div'); title.style.fontWeight = '600';
-    // If label is missing or generic, try to derive a better label from the candidate's root or element
     let displayLabel = (c.label || '').toString().trim();
     if(!displayLabel || displayLabel === '(no label)'){
-      try{
-        if(c.root) displayLabel = getLabelTextFromRoot(c.root) || displayLabel;
-        if((!displayLabel || displayLabel === '(no label)') && c.el) {
-          const root = c.el.closest && (c.el.closest('.freebirdFormviewerComponentsQuestionBaseRoot') || c.el.closest('.question') || c.el.closest('div[role="listitem"]'));
-          if(root) displayLabel = getLabelTextFromRoot(root) || displayLabel;
-        }
-      }catch(e){}
+      try{ if(c.root) displayLabel = getLabelTextFromRoot(c.root) || displayLabel; if((!displayLabel || displayLabel === '(no label)') && c.el){ const root = c.el.closest && (c.el.closest('.freebirdFormviewerComponentsQuestionBaseRoot') || c.el.closest('.question') || c.el.closest('div[role="listitem"]')); if(root) displayLabel = getLabelTextFromRoot(root) || displayLabel; } }catch(e){}
     }
-    // Last resort: summarize options to give context
     if(!displayLabel || displayLabel === '(no label)'){
-      if(c.options && c.options.length>0){
-        const optSample = c.options.slice(0,4).map(o=>o.label).filter(Boolean).join(', ');
-        displayLabel = `Question — options: ${optSample}`;
-      } else {
-        displayLabel = '(question label not found)';
-      }
+      if(c.options && c.options.length>0){ const optSample = c.options.slice(0,4).map(o=>o.label).filter(Boolean).join(', '); displayLabel = `Question — options: ${optSample}`; }
+      else displayLabel = '(question label not found)';
     }
     title.textContent = displayLabel;
     const subtitle = document.createElement('div'); subtitle.style.color = '#444';
-    const meta = document.createElement('div');
-    meta.style.fontSize='11px';
-    meta.style.color = (c.score || 0) < 50 ? '#e67e22' : '#888'; 
-    meta.textContent = (c.score || 0) < 50 ? 
-      `⚠️ Low confidence match (score: ${c.score||0}). Please verify.` : 
-      `match: ${c.key} score: ${c.score||0}`;
-    if(c.type === 'text'){
-      subtitle.textContent = String(c.value);
-    }else if(c.type === 'select'){
-      // render dropdown
-      const sel = document.createElement('select');
-      sel.style.width='100%';
-      c.options.forEach(opt=>{ const o = document.createElement('option'); o.value=opt.value; o.textContent=opt.label; if(c.chosen && opt.label===c.chosen.label) o.selected=true; sel.appendChild(o); });
-      subtitle.appendChild(sel);
-      sel.setAttribute('data-idx', i);
-    }else if(c.type === 'radio'){
-      const dd = document.createElement('select'); dd.style.width='100%';
-      c.options.forEach(opt=>{ const o = document.createElement('option'); o.value = opt.label; o.textContent = opt.label; if(opt.label === c.chosenLabel) o.selected = true; dd.appendChild(o); });
-      subtitle.appendChild(dd); dd.setAttribute('data-idx', i);
-    }else if(c.type === 'checkbox'){
-      // render multiple checkboxes
+    const meta = document.createElement('div'); meta.style.fontSize='11px'; meta.style.color = (c.score || 0) < 50 ? '#e67e22' : '#888';
+    meta.textContent = (c.score || 0) < 50 ? `⚠️ Low confidence match (score: ${c.score||0}). Please verify.` : `match: ${c.key} score: ${c.score||0}`;
+    // Render controls based on merged type (prefer select/radio/checkbox rendering when options exist)
+    if(c.type === 'text' && !c.options){ subtitle.textContent = String(c.value); }
+    else if(c.options && c.options.length>0){
+      // render dropdown for select/radio-like grouped options
+  const sel = document.createElement('select'); sel.style.width='100%';
+      c.options.forEach(opt=>{ const o = document.createElement('option'); o.value = opt.value || opt.label; o.textContent = opt.label; if((c.chosen && opt.label===c.chosen.label) || (c.chosenLabel && opt.label===c.chosenLabel)) o.selected=true; sel.appendChild(o); });
+  subtitle.appendChild(sel); sel.setAttribute('data-idx', primaryIdx); sel.setAttribute('data-orig', origIndices.join(','));
+    } else if(c.type === 'checkbox'){
       const container = document.createElement('div');
-      c.options.forEach(opt=>{
-        const cb = document.createElement('label'); cb.style.display='block'; cb.style.fontSize='13px';
-        const input = document.createElement('input'); input.type='checkbox'; input.style.marginRight='6px';
-        if(c.chosenLabels && c.chosenLabels.includes(opt.label)) input.checked = true;
-        input.setAttribute('data-idx', i);
-        input.setAttribute('data-opt', opt.label);
-        cb.appendChild(input); cb.appendChild(document.createTextNode(opt.label)); container.appendChild(cb);
-      });
+  (c.options||[]).forEach(opt=>{ const cb = document.createElement('label'); cb.style.display='block'; cb.style.fontSize='13px'; const input = document.createElement('input'); input.type='checkbox'; input.style.marginRight='6px'; if(c.chosenLabels && c.chosenLabels.includes(opt.label)) input.checked = true; input.setAttribute('data-idx', primaryIdx); input.setAttribute('data-orig', origIndices.join(',')); input.setAttribute('data-opt', opt.label); cb.appendChild(input); cb.appendChild(document.createTextNode(opt.label)); container.appendChild(cb); });
       subtitle.appendChild(container);
     }
     info.appendChild(title); info.appendChild(subtitle); info.appendChild(meta);
-    row.appendChild(info);
-    list.appendChild(row);
+    row.appendChild(info); list.appendChild(row);
   });
   overlay.appendChild(list);
+  // If debugging enabled, show a compact metadata panel with candidate info
+  if(AF_DEBUG){
+    const dbg = document.createElement('div'); dbg.style.marginTop='8px'; dbg.style.maxHeight='120px'; dbg.style.overflow='auto'; dbg.style.fontSize='12px'; dbg.style.background='#f7f7f7'; dbg.style.padding='8px'; dbg.style.borderRadius='6px';
+    const dbgTitle = document.createElement('div'); dbgTitle.style.fontWeight='600'; dbgTitle.textContent = 'DEBUG: candidate metadata'; dbg.appendChild(dbgTitle);
+    candidates.forEach((c, idx)=>{
+      try{
+        const row = document.createElement('div'); row.style.marginTop='6px'; row.style.borderTop='1px solid #eee'; row.style.paddingTop='6px';
+        const meta = document.createElement('div'); meta.textContent = `#${idx} key=${c.key||''} score=${c.score||0} label=${(c.label||'').slice(0,80)}`;
+        const selInfo = document.createElement('div'); selInfo.style.color='#666'; selInfo.style.fontSize='11px'; selInfo.textContent = `root=${c.rootSelector||c.root?elementToSelector(c.root):''} el=${c.elSelector||c.el?elementToSelector(c.el):''}`;
+        row.appendChild(meta); row.appendChild(selInfo); dbg.appendChild(row);
+        console.log('[AutoFill][DEBUG] candidate', idx, c);
+      }catch(e){}
+    });
+    overlay.appendChild(dbg);
+  }
   const actions = document.createElement('div');
   actions.style.marginTop = '10px';
   const applyBtn = document.createElement('button');
@@ -1322,8 +1442,26 @@ function showPreviewOverlay(candidates, profile){
     });
   }
   applyBtn.addEventListener('click', ()=>{
-    const checked = Array.from(overlay.querySelectorAll('input[type="checkbox"]')).filter(cb=>cb.checked).map(cb=>Number(cb.getAttribute('data-idx')));
-    checked.forEach(idx=>{
+    // find all checked primary checkboxes and also any selected controls (selects/checkboxes inside grouped rows)
+    // We'll collect a set of original candidate indices that should be applied.
+    const origIndicesSet = new Set();
+    // primary row checkboxes
+    Array.from(overlay.querySelectorAll('input[type="checkbox"][data-idx]')).forEach(cb=>{
+      if(cb.checked){
+        const orig = cb.getAttribute('data-orig');
+        if(orig){ orig.split(',').map(s=>s.trim()).filter(Boolean).forEach(si=>origIndicesSet.add(Number(si))); }
+        else { const idx = Number(cb.getAttribute('data-idx')); if(!isNaN(idx)) origIndicesSet.add(idx); }
+      }
+    });
+    // also include selects (in case user changed a dropdown selection but left the primary checkbox unchecked)
+    Array.from(overlay.querySelectorAll('select[data-idx]')).forEach(selControl=>{
+      const orig = selControl.getAttribute('data-orig');
+      if(orig){ orig.split(',').map(s=>s.trim()).filter(Boolean).forEach(si=>origIndicesSet.add(Number(si))); }
+      else { const idx = Number(selControl.getAttribute('data-idx')); if(!isNaN(idx)) origIndicesSet.add(idx); }
+    });
+
+    // for each original candidate index, apply using existing logic
+    Array.from(origIndicesSet).forEach(idx=>{
       const c = candidates[idx]; if(!c) return;
       if(c.type === 'text'){
         const inp = c.el;
@@ -1333,24 +1471,28 @@ function showPreviewOverlay(candidates, profile){
           inp.setAttribute && inp.setAttribute('data-autofill-score', String(c.score || 0));
         }catch(e){ /* ignore apply text error */ }
       }else if(c.type === 'select'){
-        const sel = c.el; const selControl = overlay.querySelector(`select[data-idx="${idx}"]`);
-        if(selControl){ sel.value = selControl.value; sel.dispatchEvent(new Event('change',{bubbles:true})); }
+        // for selects, find corresponding control in overlay using data-orig or data-idx mapping
+        // we prefer overlay select mapped to the group's primary index
+        const selControl = overlay.querySelector(`select[data-orig][data-orig*="${idx}"]`) || overlay.querySelector(`select[data-idx="${idx}"]`);
+        if(selControl){ const sel = c.el; try{ sel.value = selControl.value; sel.dispatchEvent(new Event('change',{bubbles:true})); }catch(e){} }
       }else if(c.type === 'radio'){
-        const selControl = overlay.querySelector(`select[data-idx="${idx}"]`);
+        const selControl = overlay.querySelector(`select[data-orig][data-orig*="${idx}"]`) || overlay.querySelector(`select[data-idx="${idx}"]`);
         const chosenLabel = selControl ? selControl.value : c.chosenLabel;
         const opt = c.options.find(o=>o.label === chosenLabel);
         if(opt && opt.el){
           selectOptionElement(opt.el);
         }
       }else if(c.type === 'checkbox'){
-        // find all inputs within overlay with same data-idx
-        const inputs = Array.from(overlay.querySelectorAll(`input[type="checkbox"][data-idx="${idx}"]`));
+        // For checkbox groups, there may be multiple options per original candidate.
+        // Find overlay inputs that include this original idx in data-orig and check those.
+        const inputs = Array.from(overlay.querySelectorAll(`input[type="checkbox"][data-orig]`)).filter(i=>{
+          const orig = i.getAttribute('data-orig') || '';
+          return orig.split(',').map(s=>s.trim()).includes(String(idx));
+        });
         inputs.forEach(iEl=>{
           const optLabel = iEl.getAttribute('data-opt');
           const opt = c.options.find(o=>o.label === optLabel);
-          if(opt && opt.el){
-            if(iEl.checked) selectOptionElement(opt.el);
-          }
+          if(opt && opt.el){ if(iEl.checked) selectOptionElement(opt.el); }
         });
       }
     });
@@ -1481,9 +1623,9 @@ function simpleMatch(label, profile){
   if(s.includes('resume') || s.includes('cv')) return profile.resumeLink || null;
   if((s.includes('college') || s.includes('institution') || s.includes('university') || s.includes('institute') || s.includes('college name') || s.includes('name of college') || s.includes('name of institution')) && profile.college) return profile.college;
   if(s.includes('branch') || s.includes('stream') || s.includes('department')) return profile.branch || null;
-  // graduation / passing year / passing out / yop
+  // graduation / passing year / passing out / yop - removed from profile mapping
   if(s.includes('graduat') || s.includes('passing') || s.includes('pass out') || s.includes('yop') || s.includes('year') || /\b20\d{2}\b/.test(s)){
-    return profile.graduationYear || profile.graduationYOP || profile.gradYear || profile.graduation || null;
+    return null;
   }
   // backlog numeric detection
   if(/backlog|arrear|active backlog|no of backlogs|number of backlogs/.test(s) && typeof profile.backlogCount !== 'undefined') return profile.backlogCount;
